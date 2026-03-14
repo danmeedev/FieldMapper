@@ -118,9 +118,69 @@ async function syncToLaptop(onProgress) {
     console.error('Route pull failed:', e.message);
   }
 
+  // --- PUSH TRACK SESSIONS: Send local track sessions to laptop ---
+  let tracksPushed = 0;
+  try {
+    // Push IndexedDB track sessions
+    const localSessions = await getAllTrackSessions();
+    for (const session of localSessions) {
+      try {
+        const resp = await fetch(`${serverUrl}/api/track-session`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(session)
+        });
+        if (resp.ok) tracksPushed++;
+      } catch (e) {
+        console.error(`Track session push error for ${session.name || session.id}:`, e.message);
+      }
+    }
+
+    // Push native GPS track sessions (from background tracking)
+    if (typeof NativeGps !== 'undefined' && NativeGps.isNative) {
+      const nativeSessions = await NativeGps.getSessions();
+      for (const session of nativeSessions) {
+        try {
+          const points = await NativeGps.getSessionPoints(session.id);
+          const payload = { ...session, points };
+          const resp = await fetch(`${serverUrl}/api/track-session`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          if (resp.ok) tracksPushed++;
+        } catch (e) {
+          console.error(`Native track push error for ${session.id}:`, e.message);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Track session push failed:', e.message);
+  }
+
+  // --- PULL TRACK SESSIONS: Get track sessions from laptop ---
+  let tracksPulled = 0;
+  try {
+    const resp = await fetch(`${serverUrl}/api/track-sessions`);
+    if (resp.ok) {
+      const serverSessions = await resp.json();
+      const localSessions = await getAllTrackSessions();
+      const localSessionIds = new Set(localSessions.map(s => s.id));
+
+      for (const session of serverSessions) {
+        if (!localSessionIds.has(session.id)) {
+          await saveTrackSession(session);
+          tracksPulled++;
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Track session pull failed:', e.message);
+  }
+
   if (onProgress) onProgress(totalWork, totalWork, pushed, errors);
 
-  return { synced: pushed, pulled, errors, total: unsynced.length, routesPushed, routesPulled };
+  return { synced: pushed, pulled, errors, total: unsynced.length, routesPushed, routesPulled, tracksPushed, tracksPulled };
 }
 
 async function checkLaptopConnection() {

@@ -393,6 +393,8 @@ window.doSync = async function() {
     if (result.pulled > 0) msg += `Pulled ${result.pulled} wp. `;
     if (result.routesPushed > 0) msg += `${result.routesPushed} routes pushed. `;
     if (result.routesPulled > 0) msg += `${result.routesPulled} routes pulled. `;
+    if (result.tracksPushed > 0) msg += `${result.tracksPushed} tracks pushed. `;
+    if (result.tracksPulled > 0) msg += `${result.tracksPulled} tracks pulled. `;
     if (result.errors > 0) msg += `${result.errors} failed. `;
     if (!msg) msg = 'Everything up to date!';
     statusEl.textContent = msg.trim();
@@ -466,6 +468,9 @@ async function showWaypointDetail(id) {
       <button class="btn btn-photo" onclick="showEditWaypoint(${wp.id}); document.getElementById('wp-detail-overlay').remove();" style="flex:1">Edit</button>
       <button class="btn" style="flex:1;background:#7b1fa2" onclick="showAddPhotosQuick(${wp.id})">Add Photos</button>
     </div>
+    <div style="margin-top:12px">
+      <button class="btn" style="width:100%;background:#d32f2f" onclick="deleteWaypointFromGps(${wp.id})">Delete Waypoint</button>
+    </div>
   `;
   document.body.appendChild(overlay);
 }
@@ -530,6 +535,19 @@ function resizePhoto(file) {
     reader.readAsDataURL(file);
   });
 }
+
+// --- Delete waypoint from GPS view ---
+window.deleteWaypointFromGps = async function(id) {
+  if (!confirm('Delete this waypoint and all its photos?')) return;
+  await deleteWaypoint(id);
+  const detailOverlay = document.getElementById('wp-detail-overlay');
+  if (detailOverlay) detailOverlay.remove();
+  refreshGpsList();
+  // Also refresh map pins if map view is loaded
+  if (typeof loadMapWaypoints === 'function') {
+    try { loadMapWaypoints(); } catch (e) {}
+  }
+};
 
 // --- Export ---
 window.exportAllDataMobile = async function() {
