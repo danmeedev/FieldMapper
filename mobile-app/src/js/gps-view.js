@@ -540,6 +540,17 @@ async function showWaypointDetail(id) {
     ${sampleHtml}
     <h3 style="font-size:15px;margin:10px 0 6px">Photos (${photos.length})</h3>
     ${photoHtml}
+    <div style="margin-top:14px">
+      <button id="ai-analyze-btn" class="btn" style="width:100%;background:#1565c0" onclick="triggerAIAnalysis(${wp.id}, false)">AI Analysis</button>
+      <div id="ai-result-container" style="display:none;margin-top:10px">
+        <div id="ai-result-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <span style="font-size:14px;font-weight:bold">AI Analysis <span id="ai-cached-badge" style="display:none;font-size:11px;color:#ffa726;font-weight:normal;margin-left:6px">(cached)</span></span>
+          <button id="ai-refresh-btn" style="display:none;background:#1565c0;color:#fff;border:none;border-radius:4px;padding:4px 10px;font-size:12px;cursor:pointer" onclick="triggerAIAnalysis(${wp.id}, true)">Refresh</button>
+        </div>
+        <div id="ai-cached-time" style="display:none;font-size:11px;color:#888;margin-bottom:6px"></div>
+        <div id="ai-result-text" style="font-size:13px;line-height:1.6;padding:10px;background:#222;border-radius:6px;white-space:pre-wrap"></div>
+      </div>
+    </div>
     <div style="display:flex;gap:8px;margin-top:12px">
       <button class="btn btn-photo" onclick="showEditWaypoint(${wp.id}); document.getElementById('wp-detail-overlay').remove();" style="flex:1">Edit</button>
       <button class="btn" style="flex:1;background:#7b1fa2" onclick="showAddPhotosQuick(${wp.id})">Add Photos</button>
@@ -549,7 +560,75 @@ async function showWaypointDetail(id) {
     </div>
   `;
   document.body.appendChild(overlay);
+
+  // Show cached AI result if available
+  getAIResult(wp.id).then(function(cached) {
+    if (cached && cached.analysis) {
+      var container = document.getElementById('ai-result-container');
+      var resultText = document.getElementById('ai-result-text');
+      var cachedBadge = document.getElementById('ai-cached-badge');
+      var refreshBtn = document.getElementById('ai-refresh-btn');
+      var cachedTimeEl = document.getElementById('ai-cached-time');
+      if (container && resultText) {
+        container.style.display = 'block';
+        resultText.textContent = cached.analysis;
+        cachedBadge.style.display = 'inline';
+        refreshBtn.style.display = 'inline-block';
+        if (cached.cachedAt) {
+          cachedTimeEl.style.display = 'block';
+          cachedTimeEl.textContent = 'Cached: ' + new Date(cached.cachedAt).toLocaleString();
+        }
+      }
+    }
+  }).catch(function() {});
 }
+
+// --- AI Analysis trigger ---
+window.triggerAIAnalysis = async function(waypointId, forceRefresh) {
+  var btn = document.getElementById('ai-analyze-btn');
+  var container = document.getElementById('ai-result-container');
+  var resultText = document.getElementById('ai-result-text');
+  var cachedBadge = document.getElementById('ai-cached-badge');
+  var refreshBtn = document.getElementById('ai-refresh-btn');
+  var cachedTime = document.getElementById('ai-cached-time');
+
+  if (!btn || !container) return;
+
+  btn.disabled = true;
+  btn.textContent = forceRefresh ? 'Refreshing...' : 'Analyzing...';
+  container.style.display = 'block';
+  resultText.textContent = 'Running AI analysis...';
+  cachedBadge.style.display = 'none';
+  refreshBtn.style.display = 'none';
+  cachedTime.style.display = 'none';
+
+  try {
+    var result = await runAIAnalysis(waypointId, forceRefresh);
+    if (result.error) {
+      resultText.textContent = 'Error: ' + result.error;
+    } else {
+      resultText.textContent = result.analysis || 'No analysis returned.';
+
+      if (result.fromCache) {
+        cachedBadge.style.display = 'inline';
+        refreshBtn.style.display = 'inline-block';
+        if (result.cachedAt) {
+          cachedTime.style.display = 'block';
+          cachedTime.textContent = 'Cached: ' + new Date(result.cachedAt).toLocaleString();
+        }
+      } else {
+        cachedBadge.style.display = 'none';
+        refreshBtn.style.display = 'inline-block';
+        cachedTime.style.display = 'none';
+      }
+    }
+  } catch (e) {
+    resultText.textContent = 'Error: ' + e.message;
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'AI Analysis';
+};
 
 // Quick add photos without full edit form
 window.showAddPhotosQuick = function(id) {
