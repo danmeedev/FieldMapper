@@ -203,6 +203,8 @@ window.showPointEditor = function(idx) {
   document.getElementById('pe-access').value = pt.accessType;
   document.getElementById('pe-hazards').value = pt.hazards;
   document.getElementById('pe-landmarks').value = pt.landmarks;
+  const dirEl = document.getElementById('pe-directions');
+  if (dirEl) dirEl.value = pt.directions || '';
 
   // Show existing photos
   const strip = document.getElementById('pe-photo-strip');
@@ -226,6 +228,8 @@ window.savePointEdit = function() {
   pt.accessType = document.getElementById('pe-access').value;
   pt.hazards = document.getElementById('pe-hazards').value.trim();
   pt.landmarks = document.getElementById('pe-landmarks').value.trim();
+  const dirEl = document.getElementById('pe-directions');
+  if (dirEl) pt.directions = dirEl.value.trim();
 
   // Update marker color
   const access = ACCESS_TYPES[pt.accessType] || ACCESS_TYPES.any;
@@ -370,7 +374,77 @@ window.saveRouteBuilder = async function() {
 
 window.cancelRouteBuilder = function() {
   const map = window.fieldMap;
-  if (map) stopRouteBuilder(map);
+  if (map) {
+    removeGhostTrack(map);
+    stopRouteBuilder(map);
+  }
+};
+
+/**
+ * Reverse all route points (for return trip).
+ */
+window.reverseRouteBuilder = function() {
+  if (routeBuilderPoints.length < 2) return;
+  const map = window.fieldMap;
+  if (!map) return;
+
+  // Reverse the data
+  routeBuilderPoints.reverse();
+
+  // Swap start/end labels
+  routeBuilderPoints.forEach((pt, i) => {
+    if (i === 0 && pt.label === 'End') pt.label = 'Start';
+    else if (i === routeBuilderPoints.length - 1 && pt.label === 'Start') pt.label = 'End';
+  });
+
+  // Rebuild markers on map
+  routeBuilderMarkers.forEach(m => map.removeLayer(m));
+  routeBuilderLabels.forEach(l => map.removeLayer(l));
+  routeBuilderMarkers = [];
+  routeBuilderLabels = [];
+
+  const savedPoints = routeBuilderPoints.slice();
+  routeBuilderPoints = [];
+
+  savedPoints.forEach(pt => {
+    addRouteBuilderPoint(L.latLng(pt.lat, pt.lon), map, pt);
+  });
+};
+
+/**
+ * Export current route builder points as GPX.
+ */
+window.exportRouteGpx = function() {
+  if (!window.GpxUtils || routeBuilderPoints.length < 2) return;
+  const name = document.getElementById('rb-route-name').value || 'Route';
+  const gpx = GpxUtils.exportRouteGpx(routeBuilderPoints, name);
+  GpxUtils.downloadFile(gpx, `${name.replace(/[^a-z0-9]/gi, '_')}.gpx`);
+};
+
+/**
+ * Snap all route builder points to the closest point on the ghost track.
+ */
+window.snapAllToTrack = function() {
+  if (!ghostTrackPoints || routeBuilderPoints.length === 0) return;
+  const map = window.fieldMap;
+  if (!map) return;
+
+  routeBuilderPoints.forEach((pt, i) => {
+    const snapped = snapToGhostTrack(pt.lat, pt.lon);
+    pt.lat = snapped.lat;
+    pt.lon = snapped.lon;
+
+    // Update marker position
+    if (routeBuilderMarkers[i]) {
+      routeBuilderMarkers[i].setLatLng([snapped.lat, snapped.lon]);
+    }
+    if (routeBuilderLabels[i]) {
+      routeBuilderLabels[i].setLatLng([snapped.lat, snapped.lon]);
+    }
+  });
+
+  updateRouteBuilderLine();
+  updateRouteBuilderUI();
 };
 
 function formatRouteDistance(meters) {
@@ -647,47 +721,170 @@ window.showTrackToRoute = async function() {
   document.body.appendChild(overlay);
 };
 
+// Ghost track layer — shows the original recorded track as a faded
+// line underneath the route being edited, so you can see where you
+// actually walked/drove and snap route points to it.
+let ghostTrackLayer = null;
+let ghostTrackPoints = null;
+
+function showGhostTrack(map, points) {
+  removeGhostTrack(map);
+  ghostTrackPoints = points;
+  const latlngs = points.map(p => [p.lat, p.lon || p.lng]);
+  ghostTrackLayer = L.polyline(latlngs, {
+    color: '#00bcd4',
+    weight: 3,
+    opacity: 0.4,
+    dashArray: '8,6',
+    interactive: false
+  }).addTo(map);
+
+  // Show snap-to-track button
+  const snapBtn = document.getElementById('rb-snap-track-btn');
+  if (snapBtn) snapBtn.style.display = 'block';
+}
+
+function removeGhostTrack(map) {
+  if (ghostTrackLayer && map) {
+    map.removeLayer(ghostTrackLayer);
+    ghostTrackLayer = null;
+  }
+  ghostTrackPoints = null;
+}
+
+/**
+ * Find the closest point on the ghost track to a given lat/lon.
+ * Used for snapping route points to the recorded path.
+ */
+function snapToGhostTrack(lat, lon) {
+  if (!ghostTrackPoints || ghostTrackPoints.length === 0) return { lat, lon };
+
+  let minDist = Infinity;
+  let closest = ghostTrackPoints[0];
+
+  for (const p of ghostTrackPoints) {
+    const pLon = p.lon || p.lng;
+    const dlat = p.lat - lat;
+    const dlon = pLon - lon;
+    const d = dlat * dlat + dlon * dlon;
+    if (d < minDist) {
+      minDist = d;
+      closest = p;
+    }
+  }
+  return { lat: closest.lat, lon: closest.lon || closest.lng };
+}
+
 window.convertTrackToRoute = async function(sessionId) {
-  const sessions = await getAllTrackSessions();
-  const session = sessions.find(s => s.id === sessionId);
-  if (!session || !session.points || session.points.length < 2) return;
+  // Try native sessions first, then IndexedDB sessions
+  let raw = null;
+  let sessionName = 'Converted Track';
+
+  if (window.NativeGps && NativeGps.isNative) {
+    try {
+      const nativePoints = await NativeGps.getSessionPoints(sessionId);
+      if (nativePoints && nativePoints.length >= 2) {
+        raw = nativePoints.map(p => ({ lat: p.lat, lon: p.lng, alt: p.alt, t: p.timestamp }));
+        const sessions = await NativeGps.getSessions();
+        const s = sessions.find(s => s.id === sessionId);
+        if (s) sessionName = s.name;
+      }
+    } catch(e) {}
+  }
+
+  if (!raw) {
+    const sessions = await getAllTrackSessions();
+    const session = sessions.find(s => s.id === sessionId);
+    if (!session || !session.points || session.points.length < 2) return;
+    raw = session.points;
+    sessionName = session.name || sessionName;
+  }
 
   // Remove picker
   const picker = document.getElementById('track-picker-overlay');
   if (picker) picker.remove();
 
-  // Simplify: keep every Nth point to get ~20-50 route points
-  const raw = session.points;
-  const targetCount = Math.min(40, raw.length);
-  const step = Math.max(1, Math.floor(raw.length / targetCount));
-  const simplified = [];
-  for (let i = 0; i < raw.length; i += step) {
-    simplified.push(raw[i]);
-  }
-  // Always include last point
-  if (simplified[simplified.length - 1] !== raw[raw.length - 1]) {
-    simplified.push(raw[raw.length - 1]);
+  // Smart simplification using Ramer-Douglas-Peucker
+  // epsilon=15m preserves turns and switchbacks, removes straight-line redundancy
+  let simplified = window.GpxUtils ? GpxUtils.simplifyTrack(raw, 15) : raw;
+
+  // Auto-detect decision points (stops, sharp turns, elevation changes)
+  let decisionPoints = [];
+  if (window.GpxUtils) {
+    decisionPoints = GpxUtils.detectDecisionPoints(raw, {
+      stopDurationMs: 30000,
+      turnAngle: 60,
+      elevChangeM: 30
+    });
   }
 
-  // Create route object and open builder
+  // Merge decision points into simplified set (they may not overlap)
+  const simplifiedSet = new Set(simplified.map(p => `${p.lat},${p.lon || p.lng}`));
+  decisionPoints.forEach(dp => {
+    const key = `${dp.point.lat},${dp.point.lon || dp.point.lng}`;
+    if (!simplifiedSet.has(key)) {
+      simplified.push(dp.point);
+      simplified._decisionInfo = simplified._decisionInfo || {};
+      simplified._decisionInfo[simplified.length - 1] = dp;
+    }
+  });
+
+  // Sort by original track order (by timestamp or index)
+  simplified.sort((a, b) => (a.t || 0) - (b.t || 0));
+
+  // Generate labels for decision points
+  const routePoints = simplified.map((p, i) => {
+    let label = '';
+    let notes = '';
+
+    if (i === 0) {
+      label = 'Start';
+    } else if (i === simplified.length - 1) {
+      label = 'End';
+    } else {
+      // Check if this is a detected decision point
+      const dp = decisionPoints.find(d =>
+        Math.abs(d.point.lat - p.lat) < 0.00001 &&
+        Math.abs((d.point.lon || d.point.lng) - (p.lon || p.lng)) < 0.00001
+      );
+      if (dp) {
+        if (dp.type === 'stop') {
+          label = 'Stop';
+          notes = `Stopped for ${Math.round(dp.duration / 60000)} min`;
+        } else if (dp.type === 'turn') {
+          label = `Turn (${Math.round(dp.angle)}°)`;
+          notes = 'Sharp turn detected';
+        } else if (dp.type === 'elevation') {
+          label = dp.elevChange > 0 ? 'Climb' : 'Descent';
+          notes = `${Math.round(Math.abs(dp.elevChange) * 3.28084)} ft ${dp.elevChange > 0 ? 'gain' : 'drop'}`;
+        }
+      } else {
+        label = `Point ${i + 1}`;
+      }
+    }
+
+    return {
+      lat: p.lat, lon: p.lon || p.lng,
+      label, notes, accessType: 'any', hazards: '', landmarks: '',
+      directions: '', photos: []
+    };
+  });
+
   const route = {
     id: null,
-    name: session.name || 'Converted Track',
-    description: 'Converted from recorded track',
-    points: simplified.map((p, i) => ({
-      lat: p.lat, lon: p.lon,
-      label: i === 0 ? 'Start' : i === simplified.length - 1 ? 'End' : `Point ${i + 1}`,
-      notes: '', accessType: 'any', hazards: '', landmarks: '', photos: []
-    }))
+    name: sessionName,
+    description: 'Converted from recorded track (RDP simplified)',
+    points: routePoints
   };
 
-  // Switch to map tab and start builder
+  // Switch to map tab, show ghost track, and start builder
   switchTab('map');
   setTimeout(() => {
     const map = window.fieldMap;
     if (map) {
+      showGhostTrack(map, raw);
       startRouteBuilder(map, route);
-      map.fitBounds(L.latLngBounds(simplified.map(p => [p.lat, p.lon])), { padding: [30, 30] });
+      map.fitBounds(L.latLngBounds(raw.map(p => [p.lat, p.lon || p.lng])), { padding: [30, 30] });
     }
   }, 300);
 };

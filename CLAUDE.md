@@ -45,14 +45,16 @@ Mobile App (standalone)
 ### Mobile App (`mobile-app/`)
 Capacitor v6 Android app. Source in `mobile-app/src/`:
 - `index.html` — 4-tab layout: GPS, Data, Map, Weather
-- `js/app.js` — Tab switching, shared GPS via `navigator.geolocation.watchPosition`, wake lock
+- `js/app.js` — Tab switching, shared GPS (web + native), lifecycle handlers for background tracking, wake lock
+- `js/native-gps.js` — Capacitor bridge to native Android foreground service for persistent background GPS tracking
+- `js/gpx-utils.js` — GPX import/export, Ramer-Douglas-Peucker track simplification, decision point detection (stops/turns/elevation), track operations (reverse/split/merge/trim)
 - `js/waypoint-store.js` — IndexedDB-backed waypoint + route + settings persistence
-- `js/tile-cache.js` — Custom Leaflet TileLayer that caches tiles in IndexedDB, direct fetch from tile servers (no server proxy needed). Includes contour, radar, wind layers
+- `js/tile-cache.js` — Custom Leaflet TileLayer that caches tiles in IndexedDB, direct fetch from tile servers (no server proxy needed). Includes contour, radar, wind layers. Route corridor download (buffer by X miles), multi-layer batch download, size estimation
 - `js/sync-engine.js` — Bidirectional sync with laptop (push unsynced waypoints/routes, pull from laptop)
-- `js/gps-data.js` — Trip computer: speed, altitude, heading, distance, elevation gain/loss, track recording
+- `js/gps-data.js` — Trip computer: speed, altitude, heading, distance, elevation gain/loss, track recording (native + web fallback), GPX import/export
 - `js/gps-view.js` — GPS view UI (mark locations, recent list, sync controls)
 - `js/map-view.js` — Map view with layers, pins, routes, tile download, navigation, coordinate search
-- `js/route-builder.js` — Route creation with labeled points, access type, hazards, landmarks, photos
+- `js/route-builder.js` — Route creation with labeled points, access type, hazards, landmarks, directions, photos. Ghost track overlay, snap-to-track, reverse route, GPX export. Smart track-to-route conversion using RDP simplification + auto-detected decision points
 - `js/navigation.js` — Compass-based navigation to waypoints/route points with bearing, distance, ETA
 - `js/measure.js` — Distance measurement tool
 - `js/weather.js` — Open-Meteo weather data (current conditions, forecast, hourly)
@@ -116,7 +118,8 @@ Uses Claude API (`claude-sonnet-4-20250514`) for geological field analysis:
 - **Runtime**: Node.js
 - **Server**: Express 4.18, ws 8.16 (WebSocket)
 - **Frontend**: Vanilla JS, Leaflet 1.9.4 (vendored in `public/lib/`)
-- **Mobile**: Capacitor 6, native plugins (Geolocation, Camera, KeepAwake, Network, Preferences)
+- **Mobile**: Capacitor 6, native plugins (Geolocation, Camera, KeepAwake, Network, Preferences), custom native GPS tracking plugin (foreground service + SQLite)
+- **Native Android** (`mobile-app/android/.../com/fieldmapper/app/`): `GpsTrackingService.java` (foreground service with FusedLocationProvider), `TrackingDatabase.java` (SQLite for track persistence), `GpsTrackingPlugin.java` (Capacitor plugin bridge), `MainActivity.java` (plugin registration)
 - **Storage**: JSON files (server), localStorage + IndexedDB (browser/mobile)
 - **External APIs**: USGS, ESRI ArcGIS, BLM GIS, Open-Meteo, NOAA, Anthropic Claude
 - **SSL**: Auto-generated self-signed certs via openssl (required for phone GPS over HTTPS)
@@ -149,5 +152,7 @@ general, sample, geology, hazard, water, camp, landmark, trail, vehicle, mineral
 - **No build step**: All frontend code is vanilla JS, no bundler or transpilation.
 - **Single-file server**: `server.js` contains all server logic in one file.
 - **Photo handling**: Photos are captured as base64 data URLs on phone, stored in IndexedDB, then sent to server which saves them as files on disk.
-- **Tile caching strategy**: Laptop uses filesystem cache (`tiles/` dir), mobile uses IndexedDB. Both fetch-on-demand and cache permanently.
+- **Tile caching strategy**: Laptop uses filesystem cache (`tiles/` dir), mobile uses IndexedDB. Both fetch-on-demand and cache permanently. Mobile supports route corridor downloads (buffer zone around route points).
 - **GPS streaming**: Phone streams GPS to laptop in real-time via WebSocket, with HTTP POST fallback.
+- **Background GPS**: Android foreground service (`GpsTrackingService`) uses `FusedLocationProviderClient` and survives app backgrounding, screen off, and WebView destruction. Track data stored in SQLite (independent of IndexedDB) and synced to JS layer via Capacitor plugin bridge.
+- **Track-to-Route workflow**: Recorded tracks can be converted to routes using Ramer-Douglas-Peucker simplification (preserves shape). Auto-detects decision points (stops >30s, turns >60°, elevation changes >30m). Ghost track overlay shows original path during route editing. Points can be snapped to the original track path.

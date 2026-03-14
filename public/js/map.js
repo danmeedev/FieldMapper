@@ -1298,17 +1298,21 @@ function generatePrintMap(route) {
 
   // Point table
   html += `<table class="print-point-table">
-    <thead><tr><th>#</th><th>Label</th><th>Coordinates</th><th>Access</th><th>Hazards</th><th>Notes</th></tr></thead><tbody>`;
+    <thead><tr><th>#</th><th>Label</th><th>Coordinates</th><th>Access</th><th>Directions</th><th>Details</th></tr></thead><tbody>`;
   pts.forEach((pt, i) => {
     const access = ACCESS_TYPES[pt.accessType] || ACCESS_TYPES.any;
     const dist = i > 0 ? formatPrintDist(haversineDist(pts[i - 1].lat, pts[i - 1].lon, pt.lat, pt.lon)) : '--';
+    const details = [];
+    if (pt.hazards) details.push(`<span style="color:#c00">⚠ ${pt.hazards}</span>`);
+    if (pt.landmarks) details.push(`Look for: ${pt.landmarks}`);
+    if (pt.notes) details.push(pt.notes);
     html += `<tr>
       <td>${i + 1}</td>
       <td><b>${pt.label || `Point ${i + 1}`}</b></td>
-      <td style="font-family:monospace;font-size:11px">${pt.lat.toFixed(6)}, ${pt.lon.toFixed(6)}</td>
+      <td style="font-family:monospace;font-size:11px">${pt.lat.toFixed(6)}, ${pt.lon.toFixed(6)}<br><small>${dist} from prev</small></td>
       <td style="color:${access.color}">${access.icon} ${access.label}</td>
-      <td style="color:#c00">${pt.hazards || '--'}</td>
-      <td>${pt.notes || '--'}${pt.landmarks ? '<br>Look for: ' + pt.landmarks : ''}<br><small>Dist from prev: ${dist}</small></td>
+      <td>${pt.directions || '--'}</td>
+      <td>${details.join('<br>') || '--'}</td>
     </tr>`;
   });
   html += '</tbody></table>';
@@ -1661,6 +1665,8 @@ function openPointEditor(idx) {
   document.getElementById('pe-access').value = pt.accessType;
   document.getElementById('pe-hazards').value = pt.hazards || '';
   document.getElementById('pe-landmarks').value = pt.landmarks || '';
+  const dirEl = document.getElementById('pe-directions');
+  if (dirEl) dirEl.value = pt.directions || '';
   document.getElementById('pe-notes').value = pt.notes || '';
   document.getElementById('point-editor-pc').style.display = 'block';
   // Center map on this point
@@ -1674,6 +1680,8 @@ document.getElementById('pe-save')?.addEventListener('click', () => {
   pt.accessType = document.getElementById('pe-access').value;
   pt.hazards = document.getElementById('pe-hazards').value.trim();
   pt.landmarks = document.getElementById('pe-landmarks').value.trim();
+  const dirSaveEl = document.getElementById('pe-directions');
+  if (dirSaveEl) pt.directions = dirSaveEl.value.trim();
   pt.notes = document.getElementById('pe-notes').value.trim();
   document.getElementById('point-editor-pc').style.display = 'none';
   rbEditingIndex = -1;

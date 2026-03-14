@@ -79,8 +79,21 @@ let gpsWatchId = null;
 let currentPosition = null;
 let gpsActive = false;
 
+function dispatchGpsUpdate(pos) {
+  gpsActive = true;
+  currentPosition = pos;
+  if (typeof onGpsUpdate_gpsView === 'function') onGpsUpdate_gpsView(currentPosition);
+  if (typeof onGpsUpdate_mapView === 'function') onGpsUpdate_mapView(currentPosition);
+  if (typeof onGpsUpdate_gpsData === 'function') onGpsUpdate_gpsData(currentPosition);
+  if (typeof onGpsUpdate_navigation === 'function') onGpsUpdate_navigation(currentPosition);
+}
+
 function startGPS() {
   if (gpsWatchId) return;
+
+  // If native GPS plugin is active and tracking, it will push updates
+  // via NativeGps listeners. We still start web GPS as a fallback
+  // for when native tracking is NOT running (live display still needs GPS).
 
   const options = {
     enableHighAccuracy: true,
@@ -90,8 +103,9 @@ function startGPS() {
 
   gpsWatchId = navigator.geolocation.watchPosition(
     (pos) => {
-      gpsActive = true;
-      currentPosition = {
+      // If native tracking is active, native updates take priority
+      // but we still use web GPS for views that need it immediately
+      const position = {
         lat: pos.coords.latitude,
         lon: pos.coords.longitude,
         accuracy: pos.coords.accuracy,
@@ -100,11 +114,7 @@ function startGPS() {
         heading: pos.coords.heading,
         timestamp: pos.timestamp
       };
-      // Dispatch to all views
-      if (typeof onGpsUpdate_gpsView === 'function') onGpsUpdate_gpsView(currentPosition);
-      if (typeof onGpsUpdate_mapView === 'function') onGpsUpdate_mapView(currentPosition);
-      if (typeof onGpsUpdate_gpsData === 'function') onGpsUpdate_gpsData(currentPosition);
-      if (typeof onGpsUpdate_navigation === 'function') onGpsUpdate_navigation(currentPosition);
+      dispatchGpsUpdate(position);
     },
     (err) => {
       gpsActive = false;
@@ -112,6 +122,32 @@ function startGPS() {
     },
     options
   );
+}
+
+// Handle app lifecycle for native tracking persistence
+function setupLifecycleHandlers() {
+  document.addEventListener('pause', () => {
+    console.log('[App] Paused - native tracking continues in background');
+    // Native foreground service keeps running, no action needed
+  });
+
+  document.addEventListener('resume', async () => {
+    console.log('[App] Resumed');
+    // Re-check native tracking status (might have been stopped from notification)
+    if (window.NativeGps && NativeGps.isNative) {
+      const status = await NativeGps.checkTracking();
+      if (status.tracking) {
+        console.log('[App] Native tracking still active, session:', status.sessionId);
+      } else if (NativeGps.isTracking) {
+        // Was tracking before pause but stopped (user tapped Stop in notification)
+        NativeGps.isTracking = false;
+        NativeGps.currentSessionId = null;
+        if (typeof updateRecordButton === 'function') updateRecordButton();
+      }
+    }
+    // Restart web GPS watch (Android may kill it on pause)
+    if (!gpsWatchId) startGPS();
+  });
 }
 
 // --- Wake Lock ---
@@ -134,9 +170,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   await openWpDB();
   await openTileDB();
 
-  // Start GPS
+  // Initialize native GPS tracking (must be before startGPS)
+  if (window.NativeGps) {
+    const nativeAvailable = await NativeGps.init();
+    if (nativeAvailable) {
+      // Register native GPS as an additional position source
+      NativeGps.onLocationUpdate((pos) => {
+        dispatchGpsUpdate(pos);
+      });
+    }
+  }
+
+  // Start web GPS (works alongside native for live display)
   startGPS();
   requestWakeLock();
+  setupLifecycleHandlers();
 
   // Set up tab buttons
   document.querySelectorAll('.tab-btn').forEach(btn => {
