@@ -12,6 +12,42 @@ async function syncToLaptop(onProgress) {
   let pushed = 0;
   let pulled = 0;
   let errors = 0;
+  const failedIds = [];
+
+  // --- RETRY QUEUE: Attempt previously failed pushes first ---
+  const retryQueue = (await getSetting('sync-retry-queue')) || [];
+  for (const retryId of retryQueue) {
+    try {
+      const wp = await getWaypoint(retryId);
+      if (!wp) continue;
+      const photos = await getPhotos(wp.id);
+      const photoDataUrls = photos.map(p => p.dataUrl);
+
+      const payload = {
+        ...wp,
+        updatedAt: wp.updatedAt || Date.now(),
+        photoData: photoDataUrls
+      };
+
+      const resp = await fetch(`${serverUrl}/api/waypoint`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (resp.ok) {
+        await markSynced(wp.id);
+        pushed++;
+      } else {
+        failedIds.push(wp.id);
+        errors++;
+      }
+    } catch (e) {
+      console.error(`Retry push error for ${retryId}:`, e.message);
+      failedIds.push(retryId);
+      errors++;
+    }
+  }
 
   // --- PUSH: Send unsynced waypoints to laptop ---
   const unsynced = await getUnsyncedWaypoints();
@@ -24,6 +60,7 @@ async function syncToLaptop(onProgress) {
 
       const payload = {
         ...wp,
+        updatedAt: wp.updatedAt || Date.now(),
         photoData: photoDataUrls
       };
 
@@ -38,29 +75,62 @@ async function syncToLaptop(onProgress) {
         pushed++;
       } else {
         console.error(`Sync push failed for ${wp.name}: ${resp.status}`);
+        failedIds.push(wp.id);
         errors++;
       }
     } catch (e) {
       console.error(`Sync push error for ${wp.name}:`, e.message);
+      failedIds.push(wp.id);
       errors++;
     }
 
     if (onProgress) onProgress(pushed + errors, totalWork, pushed, errors);
   }
 
-  // --- PULL: Get waypoints from laptop that we don't have ---
+  // Save any failed IDs to retry queue for next sync
+  await saveSetting('sync-retry-queue', failedIds);
+
+  // --- PULL: Get waypoints from laptop, with conflict resolution ---
   try {
     const resp = await fetch(`${serverUrl}/api/waypoints`);
     if (resp.ok) {
       const serverWps = await resp.json();
       const localWps = await getAllWaypoints();
-      const localIds = new Set(localWps.map(w => w.id));
+      const localById = new Map(localWps.map(w => [w.id, w]));
 
       for (const wp of serverWps) {
-        if (!localIds.has(wp.id)) {
+        const localWp = localById.get(wp.id);
+        if (!localWp) {
+          // New waypoint - save it
           wp.synced = true;
           await saveWaypoint(wp);
           pulled++;
+        } else if (wp.updatedAt && (!localWp.updatedAt || wp.updatedAt > localWp.updatedAt)) {
+          // Server version is newer - update local copy
+          wp.synced = true;
+          await saveWaypoint(wp);
+          pulled++;
+        }
+
+        // Pull photos for this waypoint
+        if (wp.photoFiles && wp.photoFiles.length > 0) {
+          for (let i = 0; i < wp.photoFiles.length; i++) {
+            const filename = wp.photoFiles[i];
+            try {
+              const photoResp = await fetch(`${serverUrl}/photos/${filename}`);
+              if (photoResp.ok) {
+                const blob = await photoResp.blob();
+                const reader = new FileReader();
+                const dataUrl = await new Promise((resolve) => {
+                  reader.onloadend = () => resolve(reader.result);
+                  reader.readAsDataURL(blob);
+                });
+                await savePhoto(wp.id, i, dataUrl);
+              }
+            } catch (photoErr) {
+              console.error(`Failed to pull photo ${filename}:`, photoErr.message);
+            }
+          }
         }
       }
     }
@@ -207,14 +277,40 @@ async function pullFromLaptop() {
 
   const serverWps = await resp.json();
   const localWps = await getAllWaypoints();
-  const localIds = new Set(localWps.map(w => w.id));
+  const localById = new Map(localWps.map(w => [w.id, w]));
 
   let imported = 0;
   for (const wp of serverWps) {
-    if (!localIds.has(wp.id)) {
+    const localWp = localById.get(wp.id);
+    if (!localWp) {
       wp.synced = true;
       await saveWaypoint(wp);
       imported++;
+    } else if (wp.updatedAt && (!localWp.updatedAt || wp.updatedAt > localWp.updatedAt)) {
+      wp.synced = true;
+      await saveWaypoint(wp);
+      imported++;
+    }
+
+    // Pull photos for this waypoint
+    if (wp.photoFiles && wp.photoFiles.length > 0) {
+      for (let i = 0; i < wp.photoFiles.length; i++) {
+        const filename = wp.photoFiles[i];
+        try {
+          const photoResp = await fetch(`${serverUrl}/photos/${filename}`);
+          if (photoResp.ok) {
+            const blob = await photoResp.blob();
+            const reader = new FileReader();
+            const dataUrl = await new Promise((resolve) => {
+              reader.onloadend = () => resolve(reader.result);
+              reader.readAsDataURL(blob);
+            });
+            await savePhoto(wp.id, i, dataUrl);
+          }
+        } catch (photoErr) {
+          console.error(`Failed to pull photo ${filename}:`, photoErr.message);
+        }
+      }
     }
   }
 
