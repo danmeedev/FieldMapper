@@ -1,6 +1,6 @@
 // Unified waypoint + photo storage using IndexedDB
 const WP_DB_NAME = 'fieldmapper-data';
-const WP_DB_VERSION = 3;
+const WP_DB_VERSION = 4;
 
 let wpDB = null;
 
@@ -32,6 +32,9 @@ function openWpDB() {
       }
       if (!db.objectStoreNames.contains('trackSessions')) {
         db.createObjectStore('trackSessions', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('ai-cache')) {
+        db.createObjectStore('ai-cache');
       }
     };
     req.onsuccess = (e) => { wpDB = e.target.result; resolve(wpDB); };
@@ -140,6 +143,58 @@ async function deletePhoto(photoId) {
     tx.oncomplete = () => resolve();
     tx.onerror = () => resolve();
   });
+}
+
+// --- Route Photos ---
+// Store route point photos in IndexedDB, keyed by a unique ID.
+// The route point's photos array stores only these IDs (strings like "rp_<routeId>_<ptIdx>_<ts>").
+async function saveRoutePhoto(photoId, dataUrl) {
+  await openWpDB();
+  return new Promise((resolve) => {
+    const tx = wpDB.transaction('photos', 'readwrite');
+    tx.objectStore('photos').put({ id: photoId, waypointId: '__route__', dataUrl });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
+  });
+}
+
+async function getRoutePhoto(photoId) {
+  await openWpDB();
+  return new Promise((resolve) => {
+    const tx = wpDB.transaction('photos', 'readonly');
+    const req = tx.objectStore('photos').get(photoId);
+    req.onsuccess = () => resolve(req.result ? req.result.dataUrl : null);
+    req.onerror = () => resolve(null);
+  });
+}
+
+async function deleteRoutePhoto(photoId) {
+  await openWpDB();
+  return new Promise((resolve) => {
+    const tx = wpDB.transaction('photos', 'readwrite');
+    tx.objectStore('photos').delete(photoId);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
+  });
+}
+
+/**
+ * Check if a photo reference is a direct data URL or http URL (legacy/backward compat)
+ * vs an IndexedDB reference ID.
+ */
+function isInlinePhotoUrl(ref) {
+  return typeof ref === 'string' && (ref.startsWith('data:') || ref.startsWith('http'));
+}
+
+/**
+ * Resolve a photo reference to a displayable URL.
+ * If it's already a data URL or http URL, return it as-is.
+ * Otherwise fetch from IndexedDB.
+ */
+async function resolveRoutePhoto(ref) {
+  if (isInlinePhotoUrl(ref)) return ref;
+  const dataUrl = await getRoutePhoto(ref);
+  return dataUrl || '';
 }
 
 // --- Track ---
@@ -278,5 +333,32 @@ async function deleteTrackSession(id) {
     tx.objectStore('trackSessions').delete(id);
     tx.oncomplete = () => resolve();
     tx.onerror = () => resolve();
+  });
+}
+
+// --- AI Analysis Cache ---
+async function saveAIResult(waypointId, result) {
+  await openWpDB();
+  var key = String(waypointId);
+  var entry = {
+    analysis: result.analysis,
+    cachedAt: Date.now()
+  };
+  return new Promise(function(resolve) {
+    var tx = wpDB.transaction('ai-cache', 'readwrite');
+    tx.objectStore('ai-cache').put(entry, key);
+    tx.oncomplete = function() { resolve(); };
+    tx.onerror = function() { resolve(); };
+  });
+}
+
+async function getAIResult(waypointId) {
+  await openWpDB();
+  var key = String(waypointId);
+  return new Promise(function(resolve) {
+    var tx = wpDB.transaction('ai-cache', 'readonly');
+    var req = tx.objectStore('ai-cache').get(key);
+    req.onsuccess = function() { resolve(req.result || null); };
+    req.onerror = function() { resolve(null); };
   });
 }

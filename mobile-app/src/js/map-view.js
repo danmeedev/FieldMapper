@@ -3,6 +3,7 @@
 
 let mapWaypoints = [];
 let mapWaypointMarkers = [];
+let mapWaypointCluster = null;
 let mapGpsMarker = null;
 let mapAccuracyCircle = null;
 let mapTrackLine = null;
@@ -439,6 +440,10 @@ function initMapView() {
     if (el) el.textContent = `${stats.totalTiles} tiles cached`;
   });
 
+  // Initialize waypoint marker cluster group
+  mapWaypointCluster = new MarkerClusterGroup({ gridSize: 60, maxClusterZoom: 17 });
+  mapWaypointCluster.addTo(map);
+
   // Load waypoints and routes
   loadMapWaypoints();
   if (typeof loadMapRoutes === 'function') loadMapRoutes();
@@ -448,8 +453,8 @@ async function loadMapWaypoints() {
   const map = window.fieldMap;
   if (!map) return;
 
-  // Clear existing markers
-  mapWaypointMarkers.forEach(entry => map.removeLayer(entry.marker));
+  // Clear existing markers from cluster group
+  if (mapWaypointCluster) mapWaypointCluster.clearMarkers();
   mapWaypointMarkers = [];
 
   mapWaypoints = await getAllWaypoints();
@@ -465,13 +470,18 @@ async function loadMapWaypoints() {
       iconAnchor: [13, 13]
     });
 
-    const marker = L.marker([wp.lat, wp.lon], { icon, interactive: true, bubblingMouseEvents: false }).addTo(map);
+    const marker = L.marker([wp.lat, wp.lon], { icon, interactive: true, bubblingMouseEvents: false });
 
     // Build popup content with photos
     const popupContent = await buildWpPopupContent(wp);
     marker.bindPopup(popupContent, { maxWidth: 300, minWidth: 220, className: 'wp-popup' });
 
     mapWaypointMarkers.push({ id: wp.id, marker });
+  }
+
+  // Add all markers to cluster group at once
+  if (mapWaypointCluster) {
+    mapWaypointCluster.addMarkers(mapWaypointMarkers.map(e => e.marker));
   }
 
   renderMapPinList();
@@ -742,7 +752,10 @@ function renderMapPinList() {
       const map = window.fieldMap;
       map.setView([wp.lat, wp.lon], 16);
       const entry = mapWaypointMarkers.find(w => w.id === wp.id);
-      if (entry) entry.marker.openPopup();
+      if (entry) {
+        // Delay popup open to let cluster group refresh after zoom
+        setTimeout(() => entry.marker.openPopup(), 150);
+      }
     });
     list.appendChild(div);
   });

@@ -317,16 +317,57 @@ async function pullFromLaptop() {
   return { imported };
 }
 
-// AI Analysis via laptop server
-async function runAIAnalysis(waypointId) {
-  const serverUrl = await getSetting('laptopUrl');
-  if (!serverUrl) throw new Error('Connect to laptop for AI analysis');
+// AI Analysis via laptop server (with offline cache)
+async function runAIAnalysis(waypointId, forceRefresh) {
+  // Check cache first (unless forcing a refresh)
+  if (!forceRefresh && waypointId) {
+    var cached = await getAIResult(waypointId);
+    if (cached) {
+      // If we're offline, return the cached result
+      var online = navigator.onLine !== false;
+      var serverUrl = await getSetting('laptopUrl');
+      if (!online || !serverUrl) {
+        return { analysis: cached.analysis, fromCache: true, cachedAt: cached.cachedAt };
+      }
+      // If online, still check server reachability before deciding
+      try {
+        await fetch(serverUrl + '/api/cache-stats', { signal: AbortSignal.timeout(3000) });
+      } catch (e) {
+        // Server unreachable — return cached result
+        return { analysis: cached.analysis, fromCache: true, cachedAt: cached.cachedAt };
+      }
+    }
+  }
 
-  const resp = await fetch(`${serverUrl}/api/ai/analyze`, {
+  var serverUrl2 = await getSetting('laptopUrl');
+  if (!serverUrl2) {
+    // No server URL — try cache as last resort
+    if (waypointId) {
+      var fallback = await getAIResult(waypointId);
+      if (fallback) {
+        return { analysis: fallback.analysis, fromCache: true, cachedAt: fallback.cachedAt };
+      }
+    }
+    throw new Error('Connect to laptop for AI analysis');
+  }
+
+  var resp = await fetch(serverUrl2 + '/api/ai/analyze', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ waypointId })
   });
 
-  return resp.json();
+  var result = await resp.json();
+
+  // Cache the successful result
+  if (result.analysis && waypointId) {
+    try {
+      await saveAIResult(waypointId, result);
+    } catch (e) {
+      console.error('Failed to cache AI result:', e.message);
+    }
+  }
+
+  result.fromCache = false;
+  return result;
 }

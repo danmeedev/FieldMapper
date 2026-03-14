@@ -77,6 +77,8 @@ let trackPoints = [];
 // Waypoints
 let waypoints = JSON.parse(localStorage.getItem('fieldmapper-waypoints') || '[]');
 let waypointMarkers = [];
+const waypointCluster = new MarkerClusterGroup({ gridSize: 60, maxClusterZoom: 17 });
+waypointCluster.addTo(map);
 
 // Overlay layers
 let claimsLayer = null;
@@ -378,11 +380,12 @@ function renderWaypointMarker(wp) {
     iconAnchor: [13, 13]
   });
 
-  const marker = L.marker([wp.lat, wp.lon], { icon, interactive: true, bubblingMouseEvents: false }).addTo(map);
+  const marker = L.marker([wp.lat, wp.lon], { icon, interactive: true, bubblingMouseEvents: false });
 
   const popupContent = buildPopupContent(wp);
   marker.bindPopup(popupContent, { maxWidth: 320, minWidth: 200 });
   waypointMarkers.push({ id: wp.id, marker });
+  waypointCluster.addMarker(marker);
 }
 
 function buildPopupContent(wp) {
@@ -448,9 +451,11 @@ function renderWaypointList() {
     `;
     div.addEventListener('click', () => {
       map.setView([wp.lat, wp.lon], 16);
-      // Open the popup for this waypoint
+      // Open the popup for this waypoint (delay to let cluster refresh after zoom)
       const entry = waypointMarkers.find(w => w.id === wp.id);
-      if (entry) entry.marker.openPopup();
+      if (entry) {
+        setTimeout(() => entry.marker.openPopup(), 150);
+      }
     });
     list.appendChild(div);
   });
@@ -488,6 +493,7 @@ window.removeWaypoint = function(id) {
   saveWaypoints();
   const entry = waypointMarkers.find(w => w.id === id);
   if (entry) {
+    waypointCluster.removeMarker(entry.marker);
     map.removeLayer(entry.marker);
     waypointMarkers = waypointMarkers.filter(w => w.id !== id);
   }
@@ -555,6 +561,7 @@ window.editWaypoint = function(id) {
     // Re-render marker
     const entry = waypointMarkers.find(w => w.id === id);
     if (entry) {
+      waypointCluster.removeMarker(entry.marker);
       map.removeLayer(entry.marker);
       waypointMarkers = waypointMarkers.filter(w => w.id !== id);
     }

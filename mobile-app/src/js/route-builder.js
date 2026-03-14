@@ -203,7 +203,7 @@ function updateRouteBuilderUI() {
   });
 }
 
-window.showPointEditor = function(idx) {
+window.showPointEditor = async function(idx) {
   const pt = routeBuilderPoints[idx];
   if (!pt) return;
 
@@ -222,15 +222,17 @@ window.showPointEditor = function(idx) {
   const dirEl = document.getElementById('pe-directions');
   if (dirEl) dirEl.value = pt.directions || '';
 
-  // Show existing photos
+  // Show existing photos (resolve references from IndexedDB)
   const strip = document.getElementById('pe-photo-strip');
   strip.innerHTML = '';
-  pt.photos.forEach((dataUrl, i) => {
+  for (let i = 0; i < pt.photos.length; i++) {
+    const photoUrl = await resolveRoutePhoto(pt.photos[i]);
+    if (!photoUrl) continue;
     const div = document.createElement('div');
     div.style.cssText = 'position:relative;display:inline-block';
-    div.innerHTML = `<img src="${dataUrl}" style="width:60px;height:60px;object-fit:cover;border-radius:4px;border:1px solid #444"><button onclick="removePointPhoto(${idx},${i})" style="position:absolute;top:-4px;right:-4px;background:red;color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:10px;cursor:pointer">X</button>`;
+    div.innerHTML = `<img src="${photoUrl}" style="width:60px;height:60px;object-fit:cover;border-radius:4px;border:1px solid #444"><button onclick="removePointPhoto(${idx},${i})" style="position:absolute;top:-4px;right:-4px;background:red;color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:10px;cursor:pointer">X</button>`;
     strip.appendChild(div);
-  });
+  }
 };
 
 window.savePointEdit = function() {
@@ -290,7 +292,7 @@ window.handlePointPhoto = function(input) {
     const reader = new FileReader();
     reader.onload = (ev) => {
       const img = new Image();
-      img.onload = () => {
+      img.onload = async () => {
         const canvas = document.createElement('canvas');
         const MAX = 1200;
         let w = img.width, h = img.height;
@@ -300,7 +302,12 @@ window.handlePointPhoto = function(input) {
         canvas.width = w; canvas.height = h;
         canvas.getContext('2d').drawImage(img, 0, 0, w, h);
         const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
-        pt.photos.push(dataUrl);
+
+        // Save photo blob to IndexedDB, store only the reference ID
+        const routeId = editingRouteId || 'new';
+        const photoId = `rp_${routeId}_${idx}_${Date.now()}`;
+        await saveRoutePhoto(photoId, dataUrl);
+        pt.photos.push(photoId);
 
         const strip = document.getElementById('pe-photo-strip');
         const div = document.createElement('div');
@@ -315,9 +322,14 @@ window.handlePointPhoto = function(input) {
   input.value = '';
 };
 
-window.removePointPhoto = function(ptIdx, photoIdx) {
+window.removePointPhoto = async function(ptIdx, photoIdx) {
   const pt = routeBuilderPoints[ptIdx];
   if (pt) {
+    const ref = pt.photos[photoIdx];
+    // Delete from IndexedDB if it's a stored reference (not a legacy data URL)
+    if (ref && !isInlinePhotoUrl(ref)) {
+      await deleteRoutePhoto(ref);
+    }
     pt.photos.splice(photoIdx, 1);
     showPointEditor(ptIdx); // refresh
   }
@@ -770,7 +782,7 @@ window.mapNavFullscreen = function() {
   navigateRoute(mapNavRoute.id);
 };
 
-function updateMapNavDisplay() {
+async function updateMapNavDisplay() {
   if (!mapNavRoute || !mapNavRoute.points[mapNavIndex]) return;
 
   const pt = mapNavRoute.points[mapNavIndex];
@@ -813,13 +825,17 @@ function updateMapNavDisplay() {
   if (pt.landmarks) infoHtml += `<div class="nav-info-row landmark">\u{1F3D4}\uFE0F <b>Look for:</b> ${pt.landmarks}</div>`;
   if (pt.notes) infoHtml += `<div class="nav-info-row">\u{1F4DD} ${pt.notes}</div>`;
 
-  // Photos
+  // Photos — resolve references from IndexedDB
   if (pt.photos && pt.photos.length > 0) {
-    infoHtml += `<div style="display:flex;gap:4px;margin-top:4px;overflow-x:auto">`;
-    pt.photos.forEach((url, i) => {
-      infoHtml += `<img src="${url}" onclick="showFullPhoto('nav-route',${i})" style="width:50px;height:50px;object-fit:cover;border-radius:4px;flex-shrink:0;cursor:pointer">`;
-    });
-    infoHtml += `</div>`;
+    const resolvedUrls = await Promise.all(pt.photos.map(ref => resolveRoutePhoto(ref)));
+    const validUrls = resolvedUrls.filter(u => u);
+    if (validUrls.length > 0) {
+      infoHtml += `<div style="display:flex;gap:4px;margin-top:4px;overflow-x:auto">`;
+      validUrls.forEach((url, i) => {
+        infoHtml += `<img src="${url}" onclick="showFullPhoto('nav-route',${i})" style="width:50px;height:50px;object-fit:cover;border-radius:4px;flex-shrink:0;cursor:pointer">`;
+      });
+      infoHtml += `</div>`;
+    }
   }
 
   document.getElementById('map-nav-info').innerHTML = infoHtml;
