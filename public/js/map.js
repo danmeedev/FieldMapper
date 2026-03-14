@@ -1557,6 +1557,7 @@ function addRbPoint(lat, lon, data) {
     accessType: (data && data.accessType) || 'any',
     hazards: (data && data.hazards) || '',
     landmarks: (data && data.landmarks) || '',
+    directions: (data && data.directions) || '',
     photos: (data && data.photos) || [],
     snappedPath: null // road geometry to NEXT point
   };
@@ -1731,7 +1732,7 @@ async function saveRouteBuilder() {
     name,
     description: '',
     points: rbPoints.map(p => ({
-      lat: p.lat, lon: p.lon, label: p.label, notes: p.notes,
+      lat: p.lat, lon: p.lon, label: p.label, notes: p.notes, directions: p.directions || '',
       accessType: p.accessType, hazards: p.hazards, landmarks: p.landmarks, photos: p.photos || []
     })),
     snappedGeometry, // full road-traced path for display

@@ -66,6 +66,11 @@ function stopRouteBuilder(map) {
     window._rbClickHandler = null;
   }
 
+  // Clear ghost track if present
+  removeGhostTrack(map);
+  const snapBtn = document.getElementById('rb-snap-track-btn');
+  if (snapBtn) snapBtn.style.display = 'none';
+
   // Clear markers
   routeBuilderMarkers.forEach(m => map.removeLayer(m));
   routeBuilderLabels.forEach(l => map.removeLayer(l));
@@ -89,6 +94,7 @@ function addRouteBuilderPoint(latlng, map, existingData) {
     accessType: existingData?.accessType || 'any',
     hazards: existingData?.hazards || '',
     landmarks: existingData?.landmarks || '',
+    directions: existingData?.directions || '',
     photos: existingData?.photos || []
   };
   routeBuilderPoints.push(point);
@@ -359,7 +365,7 @@ window.saveRouteBuilder = async function() {
     description: document.getElementById('rb-route-desc').value.trim(),
     points: routeBuilderPoints.map(p => ({
       lat: p.lat, lon: p.lon,
-      label: p.label, notes: p.notes,
+      label: p.label, notes: p.notes, directions: p.directions || '',
       accessType: p.accessType, hazards: p.hazards,
       landmarks: p.landmarks, photos: p.photos
     })),
@@ -443,7 +449,7 @@ window.snapAllToTrack = function() {
     }
   });
 
-  updateRouteBuilderLine();
+  updateRouteBuilderLine(map);
   updateRouteBuilderUI();
 };
 
@@ -654,8 +660,9 @@ function updateMapNavDisplay() {
   }
   document.getElementById('map-nav-distance').textContent = distText || '--';
 
-  // Notes/hazards/landmarks
+  // Directions/notes/hazards/landmarks
   let infoHtml = '';
+  if (pt.directions) infoHtml += `<div class="nav-info-row directions" style="color:#81c784;font-weight:bold">\u{1F9ED} ${pt.directions}</div>`;
   if (pt.hazards) infoHtml += `<div class="nav-info-row hazard">\u26A0\uFE0F <b>Hazard:</b> ${pt.hazards}</div>`;
   if (pt.landmarks) infoHtml += `<div class="nav-info-row landmark">\u{1F3D4}\uFE0F <b>Look for:</b> ${pt.landmarks}</div>`;
   if (pt.notes) infoHtml += `<div class="nav-info-row">\u{1F4DD} ${pt.notes}</div>`;
@@ -697,7 +704,30 @@ function onGpsUpdate_mapNav(pos) {
 
 // ========== CONVERT RECORDED TRACK TO ROUTE ==========
 window.showTrackToRoute = async function() {
-  const sessions = await getAllTrackSessions();
+  let sessions = await getAllTrackSessions();
+
+  // Also include native GPS sessions if available
+  if (window.NativeGps && NativeGps.isNative) {
+    try {
+      const nativeSessions = await NativeGps.getSessions();
+      nativeSessions.forEach(ns => {
+        // Avoid duplicates — native sessions have numeric IDs
+        if (!sessions.find(s => s.id === ns.id)) {
+          sessions.push({
+            id: ns.id,
+            name: ns.name || 'Native Track',
+            startTime: ns.startTime,
+            endTime: ns.endTime,
+            points: null, // loaded on demand in convertTrackToRoute
+            pointCount: ns.pointCount,
+            distance: 0,
+            native: true
+          });
+        }
+      });
+    } catch(e) { console.warn('Failed to load native sessions:', e); }
+  }
+
   if (sessions.length === 0) { alert('No recorded tracks found. Record a track from the Data tab first.'); return; }
 
   const overlay = document.createElement('div');
@@ -708,11 +738,12 @@ window.showTrackToRoute = async function() {
   html += `<p style="font-size:12px;color:#888;margin-bottom:12px">Select a recorded track to convert. Points will be simplified and you can edit labels/notes.</p>`;
 
   sessions.forEach(s => {
-    const pts = s.points ? s.points.length : 0;
+    const pts = s.points ? s.points.length : (s.pointCount || 0);
     const dist = s.distance ? formatRouteDistance(s.distance) : '--';
     const date = new Date(s.startTime).toLocaleString();
+    const badge = s.native ? ' <span style="background:#00897b;color:#fff;padding:1px 5px;border-radius:3px;font-size:10px">BG</span>' : '';
     html += `<div class="rb-route-item" style="cursor:pointer" onclick="convertTrackToRoute(${s.id})">
-      <div style="flex:1"><div style="font-weight:bold">${s.name}</div><div style="font-size:11px;color:#888">${pts} points | ${dist} | ${date}</div></div>
+      <div style="flex:1"><div style="font-weight:bold">${s.name}${badge}</div><div style="font-size:11px;color:#888">${pts} points | ${dist} | ${date}</div></div>
     </div>`;
   });
 
