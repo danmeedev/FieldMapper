@@ -9,8 +9,8 @@ const os = require('os');
 
 const app = express();
 
-const PORT = 3000;
-const HTTPS_PORT = 3443;
+const PORT = parseInt(process.env.FIELDMAPPER_PORT, 10) || 3000;
+const HTTPS_PORT = parseInt(process.env.FIELDMAPPER_HTTPS_PORT, 10) || 3443;
 
 // --- Self-signed HTTPS cert (required for phone GPS access) ---
 const certDir = path.join(__dirname, 'certs');
@@ -57,7 +57,7 @@ app.use(express.json({ limit: '50mb' }));
 // CORS - allow mobile app to sync from any origin
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
@@ -70,6 +70,19 @@ app.use(express.static(path.join(__dirname, 'public')));
 const photosDir = path.join(__dirname, 'data', 'photos');
 if (!fs.existsSync(photosDir)) fs.mkdirSync(photosDir, { recursive: true });
 app.use('/photos', express.static(photosDir));
+
+// Optional Bearer token auth on /api/* routes
+if (process.env.FIELDMAPPER_AUTH_TOKEN) {
+  const authToken = process.env.FIELDMAPPER_AUTH_TOKEN;
+  app.use('/api', (req, res, next) => {
+    const header = req.headers.authorization;
+    if (!header || header !== `Bearer ${authToken}`) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    next();
+  });
+  console.log('Auth token enabled for /api/* routes.');
+}
 
 // Upload waypoint with photos (from phone)
 app.post('/api/waypoint', (req, res) => {
@@ -449,10 +462,15 @@ function downloadFile(url, dest) {
 // Load API key from config file
 const configFile = path.join(__dirname, 'config.json');
 function getConfig() {
+  let config = {};
   if (fs.existsSync(configFile)) {
-    try { return JSON.parse(fs.readFileSync(configFile, 'utf8')); } catch (e) {}
+    try { config = JSON.parse(fs.readFileSync(configFile, 'utf8')); } catch (e) {}
   }
-  return {};
+  // Environment variable takes priority over config.json
+  if (process.env.ANTHROPIC_API_KEY) {
+    config.anthropicApiKey = process.env.ANTHROPIC_API_KEY;
+  }
+  return config;
 }
 
 app.post('/api/config', (req, res) => {
