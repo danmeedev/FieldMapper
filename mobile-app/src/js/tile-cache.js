@@ -340,6 +340,173 @@ async function downloadArea(sourceId, bounds, minZoom, maxZoom, onProgress) {
   }
 }
 
+/**
+ * Download tiles along a route corridor (buffer by X miles around the route).
+ * Much more efficient than downloading a full rectangular area.
+ * @param {Array} sourceIds - Array of source IDs to download (multi-layer)
+ * @param {Array} routePoints - Array of {lat, lon/lng} points
+ * @param {number} bufferMiles - Buffer distance in miles around the route
+ * @param {number} minZoom - Min zoom level
+ * @param {number} maxZoom - Max zoom level
+ * @param {function} onProgress - Progress callback(done, total, phase)
+ * @param {object} control - { cancelled: false } — set cancelled=true to stop
+ */
+async function downloadRouteCorridor(sourceIds, routePoints, bufferMiles, minZoom, maxZoom, onProgress, control) {
+  await openTileDB();
+
+  const bufferDeg = bufferMiles / 69.0; // rough miles-to-degrees conversion
+
+  // Collect all unique tiles across all zoom levels within the corridor
+  const tileSet = new Set();
+  const tiles = [];
+
+  for (let z = minZoom; z <= maxZoom; z++) {
+    const n = Math.pow(2, z);
+
+    // For each segment of the route, find tiles that intersect the buffer
+    for (let i = 0; i < routePoints.length; i++) {
+      const pt = routePoints[i];
+      const lat = pt.lat;
+      const lon = pt.lon || pt.lng;
+
+      // Buffer bounding box around this point
+      const latMin = lat - bufferDeg;
+      const latMax = lat + bufferDeg;
+      const lonMin = lon - bufferDeg / Math.cos(lat * Math.PI / 180);
+      const lonMax = lon + bufferDeg / Math.cos(lat * Math.PI / 180);
+
+      const xMin = Math.floor((lonMin + 180) / 360 * n);
+      const xMax = Math.floor((lonMax + 180) / 360 * n);
+      const latRadN = Math.min(85.05, latMax) * Math.PI / 180;
+      const latRadS = Math.max(-85.05, latMin) * Math.PI / 180;
+      const yMin = Math.floor((1 - Math.log(Math.tan(latRadN) + 1 / Math.cos(latRadN)) / Math.PI) / 2 * n);
+      const yMax = Math.floor((1 - Math.log(Math.tan(latRadS) + 1 / Math.cos(latRadS)) / Math.PI) / 2 * n);
+
+      for (let x = xMin; x <= xMax; x++) {
+        for (let y = yMin; y <= yMax; y++) {
+          const tileKey = `${z}/${x}/${y}`;
+          if (!tileSet.has(tileKey)) {
+            tileSet.add(tileKey);
+            tiles.push({ z, x, y });
+          }
+        }
+      }
+
+      // Also add tiles along the segment between this point and the next
+      if (i < routePoints.length - 1) {
+        const next = routePoints[i + 1];
+        const nextLon = next.lon || next.lng;
+        // Interpolate points along the segment (every ~0.5 buffer widths)
+        const segDist = Math.sqrt((next.lat - lat) ** 2 + (nextLon - lon) ** 2);
+        const steps = Math.ceil(segDist / (bufferDeg * 0.5));
+        for (let s = 1; s < steps; s++) {
+          const t = s / steps;
+          const iLat = lat + (next.lat - lat) * t;
+          const iLon = lon + (nextLon - lon) * t;
+
+          const iLatMin = iLat - bufferDeg;
+          const iLatMax = iLat + bufferDeg;
+          const iLonMin = iLon - bufferDeg / Math.cos(iLat * Math.PI / 180);
+          const iLonMax = iLon + bufferDeg / Math.cos(iLat * Math.PI / 180);
+
+          const ixMin = Math.floor((iLonMin + 180) / 360 * n);
+          const ixMax = Math.floor((iLonMax + 180) / 360 * n);
+          const iLatRadN = Math.min(85.05, iLatMax) * Math.PI / 180;
+          const iLatRadS = Math.max(-85.05, iLatMin) * Math.PI / 180;
+          const iyMin = Math.floor((1 - Math.log(Math.tan(iLatRadN) + 1 / Math.cos(iLatRadN)) / Math.PI) / 2 * n);
+          const iyMax = Math.floor((1 - Math.log(Math.tan(iLatRadS) + 1 / Math.cos(iLatRadS)) / Math.PI) / 2 * n);
+
+          for (let x = ixMin; x <= ixMax; x++) {
+            for (let y = iyMin; y <= iyMax; y++) {
+              const tileKey = `${z}/${x}/${y}`;
+              if (!tileSet.has(tileKey)) {
+                tileSet.add(tileKey);
+                tiles.push({ z, x, y });
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Download tiles for each source layer
+  const totalTiles = tiles.length * sourceIds.length;
+  let done = 0;
+
+  for (const sourceId of sourceIds) {
+    const source = TILE_SOURCES[sourceId];
+    if (!source) continue;
+
+    for (const t of tiles) {
+      if (control && control.cancelled) {
+        if (onProgress) onProgress(done, totalTiles, 'cancelled');
+        return { done, total: totalTiles, cancelled: true };
+      }
+
+      if (t.z > source.maxZoom) { done++; continue; }
+
+      const key = `${sourceId}/${t.z}/${t.x}/${t.y}`;
+      const cached = await getTileFromCache(key);
+      if (!cached) {
+        const tileUrl = source.url.replace('{z}', t.z).replace('{x}', t.x).replace('{y}', t.y);
+        try {
+          const resp = await throttledFetch(tileUrl);
+          if (resp.ok) {
+            const blob = await resp.blob();
+            await putTileInCache(key, blob);
+          }
+        } catch (e) { /* skip failed tiles */ }
+      }
+      done++;
+      if (done % 10 === 0 && onProgress) onProgress(done, totalTiles, sourceId);
+    }
+  }
+
+  if (onProgress) onProgress(done, totalTiles, 'complete');
+  return { done, total: totalTiles, cancelled: false };
+}
+
+/**
+ * Estimate the number of tiles and approximate size for a corridor download.
+ * @returns {object} { tileCount, estimatedMB }
+ */
+function estimateCorridorDownload(routePoints, bufferMiles, minZoom, maxZoom, sourceIds) {
+  const bufferDeg = bufferMiles / 69.0;
+  const tileSet = new Set();
+
+  for (let z = minZoom; z <= maxZoom; z++) {
+    const n = Math.pow(2, z);
+    for (const pt of routePoints) {
+      const lat = pt.lat;
+      const lon = pt.lon || pt.lng;
+      const latMin = lat - bufferDeg;
+      const latMax = lat + bufferDeg;
+      const lonMin = lon - bufferDeg / Math.cos(lat * Math.PI / 180);
+      const lonMax = lon + bufferDeg / Math.cos(lat * Math.PI / 180);
+
+      const xMin = Math.floor((lonMin + 180) / 360 * n);
+      const xMax = Math.floor((lonMax + 180) / 360 * n);
+      const latRadN = Math.min(85.05, latMax) * Math.PI / 180;
+      const latRadS = Math.max(-85.05, latMin) * Math.PI / 180;
+      const yMin = Math.floor((1 - Math.log(Math.tan(latRadN) + 1 / Math.cos(latRadN)) / Math.PI) / 2 * n);
+      const yMax = Math.floor((1 - Math.log(Math.tan(latRadS) + 1 / Math.cos(latRadS)) / Math.PI) / 2 * n);
+
+      for (let x = xMin; x <= xMax; x++) {
+        for (let y = yMin; y <= yMax; y++) {
+          tileSet.add(`${z}/${x}/${y}`);
+        }
+      }
+    }
+  }
+
+  const uniqueTiles = tileSet.size;
+  const totalTiles = uniqueTiles * sourceIds.length;
+  // Average tile ~25KB for satellite, ~15KB for topo
+  const estimatedMB = (totalTiles * 20) / 1024 / 1024;
+  return { tileCount: totalTiles, estimatedMB: Math.round(estimatedMB * 10) / 10 };
+}
+
 // Cache stats
 async function getCacheStats() {
   await openTileDB();

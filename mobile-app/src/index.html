@@ -259,6 +259,18 @@
       <button class="btn" id="record-track-btn" style="background:#1565c0">Record Track</button>
     </div>
     <div id="recording-indicator" style="display:none;text-align:center;color:#f44336;font-weight:bold;font-size:14px;animation:blink 1s infinite">⏺ Recording Track...</div>
+    <div id="native-track-stats" style="display:none;text-align:center;color:#81c784;font-size:12px;margin-top:4px"></div>
+
+    <!-- GPX Import/Export -->
+    <div style="margin-top:16px;border-top:1px solid #333;padding-top:12px">
+      <h3 style="font-size:14px;margin-bottom:8px">Import / Export</h3>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn btn-secondary" onclick="exportCurrentTrackGpx()" style="flex:1;font-size:12px;padding:8px">Export Track GPX</button>
+        <button class="btn btn-secondary" onclick="document.getElementById('gpx-import-input').click()" style="flex:1;font-size:12px;padding:8px">Import GPX</button>
+      </div>
+      <input type="file" id="gpx-import-input" accept=".gpx" style="display:none" onchange="handleGpxImport(this)">
+      <div id="gpx-import-status" style="font-size:12px;color:#4caf50;margin-top:4px;min-height:16px"></div>
+    </div>
   </div>
 </div>
 
@@ -420,9 +432,47 @@
 
   <!-- Download panel -->
   <div id="map-download-panel" class="side-panel">
-    <h3>Download Area</h3>
+    <h3>Download Tiles</h3>
     <p style="font-size:12px;color:#aaa;margin-bottom:8px">Download tiles for offline use.</p>
-    <button id="download-area-btn" class="panel-action" style="background:#00897b">Download Visible Area</button>
+
+    <button id="download-area-btn" class="panel-action" style="background:#00897b;margin-bottom:6px">Download Visible Area</button>
+
+    <div style="border-top:1px solid #333;padding-top:8px;margin-top:8px">
+      <h4 style="font-size:13px;color:#81c784;margin-bottom:4px">Route Corridor Download</h4>
+      <p style="font-size:11px;color:#888;margin-bottom:6px">Downloads tiles along a saved route with a buffer zone. Much more efficient than downloading a large area.</p>
+
+      <select id="dl-route-select" style="width:100%;padding:6px;margin-bottom:6px;border:1px solid #444;border-radius:4px;background:#222;color:#fff;font-size:12px">
+        <option value="">Select a route...</option>
+      </select>
+
+      <div style="display:flex;gap:6px;margin-bottom:6px">
+        <div style="flex:1">
+          <label style="font-size:11px;color:#aaa">Buffer (miles)</label>
+          <input type="number" id="dl-buffer" value="1" min="0.25" max="10" step="0.25" style="width:100%;padding:4px;border:1px solid #444;border-radius:4px;background:#222;color:#fff;font-size:12px">
+        </div>
+        <div style="flex:1">
+          <label style="font-size:11px;color:#aaa">Max Zoom</label>
+          <select id="dl-max-zoom" style="width:100%;padding:4px;border:1px solid #444;border-radius:4px;background:#222;color:#fff;font-size:12px">
+            <option value="13">13 (overview)</option>
+            <option value="14">14</option>
+            <option value="15" selected>15 (good detail)</option>
+            <option value="16">16</option>
+            <option value="17">17 (high detail)</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="margin-bottom:6px">
+        <label style="font-size:11px;color:#aaa">Layers to download</label>
+        <div id="dl-layers-list" style="max-height:100px;overflow-y:auto;font-size:12px"></div>
+      </div>
+
+      <div id="dl-estimate" style="font-size:12px;color:#81c784;margin-bottom:6px"></div>
+
+      <button id="dl-corridor-btn" class="panel-action" style="background:#00897b;margin-bottom:4px">Download Route Corridor</button>
+      <button id="dl-cancel-btn" class="panel-action" style="background:#d32f2f;display:none">Cancel Download</button>
+    </div>
+
     <div id="download-status" class="download-progress"></div>
   </div>
 
@@ -511,10 +561,15 @@
   </div>
   <div style="font-size:11px;color:#888;margin-bottom:6px">Tap the map to add points. Drag points to reposition. Tap a point to edit details.</div>
   <div id="rb-point-list" style="max-height:180px;overflow-y:auto;margin-bottom:8px"></div>
-  <div style="display:flex;gap:6px">
+  <div style="display:flex;gap:6px;margin-bottom:6px">
     <button onclick="undoRoutePoint()" class="btn" style="flex:1;padding:8px;background:#555;font-size:12px">Undo</button>
     <button onclick="saveRouteBuilder()" class="btn" style="flex:2;padding:8px;background:#00897b;font-size:13px">Save Route</button>
     <button onclick="cancelRouteBuilder()" class="btn" style="flex:1;padding:8px;background:#d32f2f;font-size:12px">Cancel</button>
+  </div>
+  <div style="display:flex;gap:6px">
+    <button onclick="reverseRouteBuilder()" class="btn" style="flex:1;padding:8px;background:#5c6bc0;font-size:11px">Reverse</button>
+    <button onclick="exportRouteGpx()" class="btn" style="flex:1;padding:8px;background:#455a64;font-size:11px">Export GPX</button>
+    <button onclick="snapAllToTrack()" id="rb-snap-track-btn" class="btn" style="flex:1;padding:8px;background:#00838f;font-size:11px;display:none">Snap to Track</button>
   </div>
 </div>
 
@@ -545,8 +600,12 @@
     <textarea id="pe-landmarks" placeholder="Large white quartz boulder, old mine shaft..." rows="2" style="resize:none"></textarea>
   </div>
   <div class="form-group">
-    <label>Notes / Directions</label>
-    <textarea id="pe-notes" placeholder="Take left fork, stay on ridge, cross creek..." rows="3"></textarea>
+    <label>Directions (how to get here from previous point)</label>
+    <textarea id="pe-directions" placeholder="Go 0.3mi, take left fork at Y-intersection, follow ridge..." rows="2" style="resize:none"></textarea>
+  </div>
+  <div class="form-group">
+    <label>Notes</label>
+    <textarea id="pe-notes" placeholder="Additional observations, conditions, tips..." rows="3"></textarea>
   </div>
   <div class="form-group">
     <label>Photos</label>
@@ -583,6 +642,8 @@
 <script src="js/waypoint-store.js"></script>
 <script src="js/tile-cache.js"></script>
 <script src="js/sync-engine.js"></script>
+<script src="js/native-gps.js"></script>
+<script src="js/gpx-utils.js"></script>
 <script src="js/gps-data.js"></script>
 <script src="js/measure.js"></script>
 <script src="js/navigation.js"></script>

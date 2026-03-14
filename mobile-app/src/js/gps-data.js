@@ -103,14 +103,19 @@ function saveTripData() {
     minAlt: tripMinAlt,
     elevGain: tripElevGain,
     elevLoss: tripElevLoss,
-    points: tripPoints.slice(-500) // keep last 500 points
+    points: tripPoints // no point cap — native tracking handles persistence
   });
 }
 
-// Track recording
+// Track recording — uses native foreground service when available
 async function toggleRecording() {
   if (recordingTrack) {
     // Stop recording
+    if (window.NativeGps && NativeGps.isNative && NativeGps.isTracking) {
+      // Stop native background tracking
+      await NativeGps.stopTracking();
+      console.log('[GpsData] Native tracking stopped');
+    }
     if (recordingSession) {
       recordingSession.endTime = Date.now();
       recordingSession.distance = tripDistance;
@@ -121,9 +126,26 @@ async function toggleRecording() {
     await saveSetting('recording-session', null);
   } else {
     // Start recording
+    const sessionName = `Track ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`;
+
+    // Try to start native background tracking first
+    if (window.NativeGps && NativeGps.isNative) {
+      try {
+        const result = await NativeGps.startTracking(sessionName, {
+          intervalMs: 3000,
+          minDistanceM: 5.0
+        });
+        console.log('[GpsData] Native tracking started, session:', result.sessionId);
+      } catch (e) {
+        console.warn('[GpsData] Native tracking failed, using web fallback:', e);
+      }
+    }
+
+    // Still create a JS session for trip computer compatibility
     recordingSession = {
       id: Date.now(),
-      name: `Track ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`,
+      name: sessionName,
+      nativeSessionId: NativeGps ? NativeGps.currentSessionId : null,
       startTime: Date.now(),
       endTime: null,
       points: [],
@@ -138,12 +160,33 @@ async function toggleRecording() {
 function updateRecordButton() {
   const btn = document.getElementById('record-track-btn');
   if (btn) {
-    btn.textContent = recordingTrack ? 'Stop Recording' : 'Record Track';
-    btn.style.background = recordingTrack ? '#d32f2f' : '#1565c0';
+    const nativeActive = window.NativeGps && NativeGps.isNative && NativeGps.isTracking;
+    if (recordingTrack) {
+      btn.textContent = nativeActive ? '⏹ Stop Recording (BG)' : '⏹ Stop Recording';
+      btn.style.background = '#d32f2f';
+    } else {
+      btn.textContent = '⏺ Record Track';
+      btn.style.background = '#1565c0';
+    }
   }
   const indicator = document.getElementById('recording-indicator');
   if (indicator) indicator.style.display = recordingTrack ? 'block' : 'none';
 }
+
+// Receive stats from native tracking service (called via NativeGps listener)
+window.onNativeTrackingStats = function(stats) {
+  // Update native point count display if it exists
+  const nativeStatsEl = document.getElementById('native-track-stats');
+  if (nativeStatsEl && stats) {
+    const distMi = (stats.distanceM / 1609.34).toFixed(2);
+    const mins = Math.floor(stats.elapsedMs / 60000);
+    const timeStr = mins < 60 ?
+      `${mins}m` :
+      `${Math.floor(mins/60)}h ${mins%60}m`;
+    nativeStatsEl.textContent = `BG: ${stats.points} pts · ${distMi} mi · ${timeStr}`;
+    nativeStatsEl.style.display = 'block';
+  }
+};
 
 // Called by app.js on GPS update
 function onGpsUpdate_gpsData(pos) {
@@ -250,9 +293,12 @@ function updateGpsDataDisplay(pos) {
     if (maxSpdEl) maxSpdEl.textContent = `${(tripMaxSpeed * 2.237).toFixed(1)} mph`;
 
     const avgSpdEl = document.getElementById('data-avg-speed');
-    if (avgSpdEl && tripSpeedSamples.length > 0) {
-      const avg = tripSpeedSamples.reduce((a,b) => a+b, 0) / tripSpeedSamples.length;
-      avgSpdEl.textContent = `${(avg * 2.237).toFixed(1)} mph`;
+    if (avgSpdEl && tripStartTime && tripDistance > 0) {
+      const elapsedHrs = (Date.now() - tripStartTime) / 3600000;
+      if (elapsedHrs > 0) {
+        const avgMph = (tripDistance / 1609.34) / elapsedHrs;
+        avgSpdEl.textContent = `${avgMph.toFixed(1)} mph`;
+      }
     }
 
     const elevGainEl = document.getElementById('data-elev-gain');
@@ -291,3 +337,89 @@ function bearingTo(lat1, lon1, lat2, lon2) {
             Math.sin(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.cos(dLon);
   return ((Math.atan2(y, x) * 180 / Math.PI) + 360) % 360;
 }
+
+// --- GPX Import/Export ---
+
+window.exportCurrentTrackGpx = function() {
+  if (!window.GpxUtils) return;
+  if (tripPoints.length < 2) {
+    alert('No track data to export. Start a trip and record some points first.');
+    return;
+  }
+  const name = `Track_${new Date().toISOString().slice(0,10)}`;
+  const gpx = GpxUtils.exportTrackGpx(tripPoints, name);
+  GpxUtils.downloadFile(gpx, `${name}.gpx`);
+};
+
+window.handleGpxImport = async function(input) {
+  const file = input.files[0];
+  if (!file) return;
+
+  const statusEl = document.getElementById('gpx-import-status');
+  statusEl.textContent = 'Reading file...';
+
+  try {
+    const text = await file.text();
+    const data = GpxUtils.parseGpx(text);
+
+    let imported = 0;
+
+    // Import tracks as track sessions
+    for (const track of data.tracks) {
+      if (track.points.length > 0) {
+        const session = {
+          id: Date.now() + imported,
+          name: track.name,
+          startTime: track.points[0].t || Date.now(),
+          endTime: track.points[track.points.length - 1].t || Date.now(),
+          points: track.points,
+          distance: GpxUtils.trackDistance(track.points)
+        };
+        await saveTrackSession(session);
+        imported++;
+      }
+    }
+
+    // Import waypoints
+    for (const wp of data.waypoints) {
+      const waypoint = {
+        id: Date.now() + imported,
+        lat: wp.lat,
+        lon: wp.lon,
+        name: wp.name || 'Imported',
+        category: wp.category || 'general',
+        notes: wp.notes || '',
+        altitude: wp.altitude || null,
+        timestamp: Date.now(),
+        synced: false
+      };
+      await saveWaypoint(waypoint);
+      imported++;
+    }
+
+    // Import routes
+    for (const route of data.routes) {
+      if (route.points.length > 0) {
+        const routeObj = {
+          id: Date.now() + imported,
+          name: route.name,
+          description: 'Imported from GPX',
+          points: route.points.map((p, i) => ({
+            lat: p.lat, lon: p.lon || p.lng,
+            label: p.label || (i === 0 ? 'Start' : i === route.points.length - 1 ? 'End' : `Point ${i+1}`),
+            notes: p.notes || '', accessType: 'any', hazards: '', landmarks: '', directions: '', photos: []
+          }))
+        };
+        await saveRoute(routeObj);
+        imported++;
+      }
+    }
+
+    statusEl.textContent = `Imported: ${data.tracks.length} tracks, ${data.waypoints.length} waypoints, ${data.routes.length} routes`;
+    statusEl.style.color = '#4caf50';
+    input.value = ''; // Reset file input
+  } catch (e) {
+    statusEl.textContent = `Error: ${e.message}`;
+    statusEl.style.color = '#f44336';
+  }
+};

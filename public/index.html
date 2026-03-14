@@ -167,6 +167,7 @@
     </select>
     <input id="pe-hazards" type="text" placeholder="Hazards" style="width:100%;padding:6px;margin-bottom:6px;border:1px solid #444;border-radius:4px;background:#222;color:#fff;font-size:13px">
     <input id="pe-landmarks" type="text" placeholder="Landmarks to look for" style="width:100%;padding:6px;margin-bottom:6px;border:1px solid #444;border-radius:4px;background:#222;color:#fff;font-size:13px">
+    <textarea id="pe-directions" placeholder="Directions from previous point (e.g. Go 0.3mi, take left fork...)" rows="2" style="width:100%;padding:6px;margin-bottom:6px;border:1px solid #444;border-radius:4px;background:#222;color:#fff;font-size:13px;resize:vertical"></textarea>
     <textarea id="pe-notes" placeholder="Notes" rows="2" style="width:100%;padding:6px;margin-bottom:8px;border:1px solid #444;border-radius:4px;background:#222;color:#fff;font-size:13px;resize:vertical"></textarea>
     <div style="display:flex;gap:6px">
       <button id="pe-save" style="flex:1;padding:8px;background:#4caf50;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:bold">Save</button>
@@ -204,6 +205,7 @@
   <div id="measure-info"></div>
 
   <script src="/lib/leaflet.js"></script>
+  <script src="/js/gpx-utils.js"></script>
   <script src="/js/map.js?v=5"></script>
 </body>
 </html>

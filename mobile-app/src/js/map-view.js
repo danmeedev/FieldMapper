@@ -242,6 +242,124 @@ function initMapView() {
     });
   }
 
+  // Corridor download
+  const corridorBtn = document.getElementById('dl-corridor-btn');
+  const cancelDlBtn = document.getElementById('dl-cancel-btn');
+  let dlControl = { cancelled: false };
+
+  // Populate route selector and layer checkboxes when download panel opens
+  const toggleDownload = document.getElementById('toggle-download');
+  if (toggleDownload) {
+    const origClick = toggleDownload.onclick;
+    toggleDownload.addEventListener('click', async () => {
+      // Populate routes
+      const routeSelect = document.getElementById('dl-route-select');
+      if (routeSelect) {
+        const routes = await getAllRoutes();
+        routeSelect.innerHTML = '<option value="">Select a route...</option>';
+        routes.forEach(r => {
+          routeSelect.innerHTML += `<option value="${r.id}">${r.name} (${r.points ? r.points.length : 0} pts)</option>`;
+        });
+      }
+      // Populate layer checkboxes
+      const layerList = document.getElementById('dl-layers-list');
+      if (layerList && layerList.children.length === 0) {
+        const layers = [
+          { id: 'topo', name: 'USGS Topo' },
+          { id: 'esri-topo', name: 'ESRI Topo' },
+          { id: 'satellite-hd', name: 'ESRI Satellite HD' },
+          { id: 'esri-street', name: 'ESRI Street' },
+          { id: 'blm', name: 'BLM Surface Mgmt' }
+        ];
+        layers.forEach(l => {
+          const checked = (l.id === activeBase) ? 'checked' : '';
+          layerList.innerHTML += `<label style="display:block;padding:2px 0"><input type="checkbox" class="dl-layer-cb" value="${l.id}" ${checked}> ${l.name}</label>`;
+        });
+      }
+    });
+  }
+
+  // Update estimate when selections change
+  document.addEventListener('change', (e) => {
+    if (e.target.matches('#dl-route-select, #dl-buffer, #dl-max-zoom, .dl-layer-cb')) {
+      updateCorridorEstimate();
+    }
+  });
+
+  async function updateCorridorEstimate() {
+    const routeId = document.getElementById('dl-route-select')?.value;
+    if (!routeId) { document.getElementById('dl-estimate').textContent = ''; return; }
+
+    const routes = await getAllRoutes();
+    const route = routes.find(r => String(r.id) === routeId);
+    if (!route || !route.points) return;
+
+    const buffer = parseFloat(document.getElementById('dl-buffer')?.value || 1);
+    const maxZoom = parseInt(document.getElementById('dl-max-zoom')?.value || 15);
+    const layerCbs = document.querySelectorAll('.dl-layer-cb:checked');
+    const sourceIds = Array.from(layerCbs).map(cb => cb.value);
+
+    if (sourceIds.length === 0) {
+      document.getElementById('dl-estimate').textContent = 'Select at least one layer';
+      return;
+    }
+
+    const est = estimateCorridorDownload(route.points, buffer, 10, maxZoom, sourceIds);
+    document.getElementById('dl-estimate').textContent =
+      `~${est.tileCount.toLocaleString()} tiles (~${est.estimatedMB} MB) across ${sourceIds.length} layer(s)`;
+  }
+
+  if (corridorBtn) {
+    corridorBtn.addEventListener('click', async () => {
+      const routeId = document.getElementById('dl-route-select')?.value;
+      if (!routeId) { alert('Select a route first'); return; }
+
+      const routes = await getAllRoutes();
+      const route = routes.find(r => String(r.id) === routeId);
+      if (!route || !route.points || route.points.length < 2) return;
+
+      const buffer = parseFloat(document.getElementById('dl-buffer')?.value || 1);
+      const maxZoom = parseInt(document.getElementById('dl-max-zoom')?.value || 15);
+      const layerCbs = document.querySelectorAll('.dl-layer-cb:checked');
+      const sourceIds = Array.from(layerCbs).map(cb => cb.value);
+
+      if (sourceIds.length === 0) { alert('Select at least one layer'); return; }
+
+      const statusEl = document.getElementById('download-status');
+      dlControl = { cancelled: false };
+      corridorBtn.disabled = true;
+      corridorBtn.textContent = 'Downloading...';
+      cancelDlBtn.style.display = 'block';
+
+      try {
+        const result = await downloadRouteCorridor(sourceIds, route.points, buffer, 10, maxZoom,
+          (done, total, phase) => {
+            const pct = Math.round(done / total * 100);
+            statusEl.textContent = `${done}/${total} tiles (${pct}%) — ${phase}`;
+          }, dlControl);
+
+        if (result.cancelled) {
+          statusEl.textContent = `Cancelled after ${result.done} tiles`;
+        } else {
+          statusEl.textContent = `Complete! ${result.done} tiles downloaded`;
+        }
+      } catch (e) {
+        statusEl.textContent = `Error: ${e.message}`;
+      }
+
+      corridorBtn.disabled = false;
+      corridorBtn.textContent = 'Download Route Corridor';
+      cancelDlBtn.style.display = 'none';
+    });
+  }
+
+  if (cancelDlBtn) {
+    cancelDlBtn.addEventListener('click', () => {
+      dlControl.cancelled = true;
+      cancelDlBtn.style.display = 'none';
+    });
+  }
+
   // Settings - laptop URL
   const saveSettingsBtn = document.getElementById('save-map-settings');
   if (saveSettingsBtn) {
