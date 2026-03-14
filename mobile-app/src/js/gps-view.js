@@ -15,6 +15,7 @@ async function initGpsView() {
   waypointCount = (await getSetting('wp-count')) || 0;
   sampleCount = (await getSetting('sample-count')) || 0;
   refreshGpsList();
+  updateLastSyncDisplay();
 
   // Show server URL status
   const serverUrl = await getSetting('laptopUrl');
@@ -324,12 +325,70 @@ window.saveGpsWaypoint = async function() {
 
   if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
 
-  const toast = document.getElementById('saving-toast');
-  toast.textContent = `Saved: ${title}`;
-  toast.style.display = 'block';
-  setTimeout(() => toast.style.display = 'none', 1500);
+  // Store form state for undo
+  const undoData = {
+    wpId: wpId,
+    title: title,
+    notes: notes,
+    category: selectedCategory,
+    photoCount: pendingPhotos.length
+  };
 
   closeMarkForm();
+  refreshGpsList();
+
+  // Show undo toast
+  const toast = document.getElementById('saving-toast');
+  toast.innerHTML = `Saved: ${title} <button id="undo-save-btn" style="margin-left:10px;padding:2px 10px;background:#fff;color:#333;border:none;border-radius:4px;font-weight:bold;cursor:pointer">Undo</button>`;
+  toast.style.display = 'block';
+
+  const undoTimeout = setTimeout(() => {
+    toast.style.display = 'none';
+    toast.innerHTML = 'Saved!';
+  }, 5000);
+
+  document.getElementById('undo-save-btn').addEventListener('click', async () => {
+    clearTimeout(undoTimeout);
+    toast.style.display = 'none';
+    toast.innerHTML = 'Saved!';
+
+    // Delete the just-saved waypoint and its photos
+    await deleteWaypoint(undoData.wpId);
+    for (let i = 0; i < undoData.photoCount; i++) {
+      try { await deletePhoto(`${undoData.wpId}-${i}`); } catch (e) {}
+    }
+
+    waypointCount--;
+    await saveSetting('wp-count', waypointCount);
+    if (undoData.category === 'sample') {
+      sampleCount--;
+      await saveSetting('sample-count', sampleCount);
+    }
+
+    refreshGpsList();
+
+    // Restore the mark form with previous values
+    if (currentPosition) {
+      capturedPos = { ...currentPosition };
+      const posText = `${capturedPos.lat.toFixed(6)}, ${capturedPos.lon.toFixed(6)}` +
+        (capturedPos.altitude ? ` | ${(capturedPos.altitude * 3.28084).toFixed(0)} ft` : '') +
+        (capturedPos.accuracy ? ` | Acc: ${(capturedPos.accuracy * 3.28084).toFixed(0)} ft` : '');
+      document.getElementById('captured-pos').textContent = posText;
+    }
+    document.getElementById('wp-title').value = undoData.title;
+    document.getElementById('wp-notes').value = undoData.notes;
+    pendingPhotos = [];
+    renderPhotoStrip();
+    document.getElementById('mark-overlay').classList.add('active');
+
+    if (typeof loadMapWaypoints === 'function') {
+      try { loadMapWaypoints(); } catch (e) {}
+    }
+  });
+};
+
+// --- Search/filter ---
+window.filterGpsList = function() {
   refreshGpsList();
 };
 
@@ -346,7 +405,20 @@ async function refreshGpsList() {
     unsynced === 0 ? 'All synced' : `${unsynced} unsynced`;
 
   list.innerHTML = '';
-  const recent = allWps.slice(-30).reverse();
+  let recent = allWps.slice(-30).reverse();
+
+  // Apply search filter
+  const searchInput = document.getElementById('gps-search-input');
+  if (searchInput && searchInput.value.trim()) {
+    const q = searchInput.value.trim().toLowerCase();
+    recent = allWps.filter(wp => {
+      const name = (wp.name || '').toLowerCase();
+      const category = (wp.category || '').toLowerCase();
+      const notes = (wp.notes || '').toLowerCase();
+      return name.includes(q) || category.includes(q) || notes.includes(q);
+    }).reverse();
+  }
+
   recent.forEach(wp => {
     const preset = PIN_PRESETS[wp.category] || PIN_PRESETS.general;
     const syncBadge = wp.synced
@@ -399,6 +471,10 @@ window.doSync = async function() {
     if (!msg) msg = 'Everything up to date!';
     statusEl.textContent = msg.trim();
     statusEl.style.color = result.errors > 0 ? '#f44336' : '#4caf50';
+
+    // Save last sync timestamp
+    await saveSetting('last-sync-time', Date.now());
+    updateLastSyncDisplay();
 
     // Reconnect WebSocket after sync
     connectWS();
@@ -561,3 +637,22 @@ window.exportAllDataMobile = async function() {
   a.click();
   URL.revokeObjectURL(url);
 };
+
+// --- Last sync display ---
+async function updateLastSyncDisplay() {
+  const el = document.getElementById('gps-last-sync');
+  if (!el) return;
+  const ts = await getSetting('last-sync-time');
+  if (!ts) {
+    el.textContent = 'Never synced';
+    return;
+  }
+  const mins = Math.floor((Date.now() - ts) / 60000);
+  if (mins < 1) el.textContent = 'Last sync: just now';
+  else if (mins < 60) el.textContent = `Last sync: ${mins} minute${mins > 1 ? 's' : ''} ago`;
+  else {
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) el.textContent = `Last sync: ${hrs} hour${hrs > 1 ? 's' : ''} ago`;
+    else el.textContent = `Last sync: ${Math.floor(hrs / 24)} day${Math.floor(hrs / 24) > 1 ? 's' : ''} ago`;
+  }
+}
