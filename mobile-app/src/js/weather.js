@@ -65,16 +65,23 @@ async function fetchWeather() {
     };
 
     await saveSetting('weather-cache', weatherCache);
+    await saveSetting('last-weather', { data: weatherCache, timestamp: Date.now(), lat, lon });
     renderWeather(weatherCache);
+    hideWeatherOfflineBanner();
     statusEl.textContent = `Updated ${new Date().toLocaleTimeString()}`;
     statusEl.style.color = '#4caf50';
   } catch (e) {
     statusEl.textContent = `Error: ${e.message}`;
     statusEl.style.color = '#f44336';
-    // Show cached data if available
-    if (weatherCache) {
-      const age = Math.round((Date.now() - weatherCache.fetchTime) / 60000);
-      statusEl.textContent += ` (showing cached data from ${age} min ago)`;
+    // Load cached weather from last-weather and display with offline banner
+    const cached = await getSetting('last-weather');
+    if (cached && cached.data) {
+      weatherCache = cached.data;
+      renderWeather(weatherCache);
+      showWeatherOfflineBanner(cached.timestamp);
+    } else if (weatherCache) {
+      renderWeather(weatherCache);
+      showWeatherOfflineBanner(weatherCache.fetchTime);
     }
   }
 }
@@ -154,4 +161,30 @@ function renderWeather(data) {
   }
 
   container.innerHTML = html;
+}
+
+function showWeatherOfflineBanner(timestamp) {
+  let banner = document.getElementById('weather-offline-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'weather-offline-banner';
+    banner.style.cssText = 'background:#e65100;color:#fff;text-align:center;padding:6px 10px;font-size:13px;border-radius:6px;margin:6px 0';
+    const content = document.getElementById('weather-content');
+    if (content) content.parentNode.insertBefore(banner, content);
+  }
+  const age = Date.now() - timestamp;
+  const mins = Math.floor(age / 60000);
+  const hours = Math.floor(mins / 60);
+  let agoText;
+  if (mins < 1) agoText = 'just now';
+  else if (mins < 60) agoText = `${mins} min ago`;
+  else if (hours < 24) agoText = `${hours} hr${hours > 1 ? 's' : ''} ago`;
+  else agoText = `${Math.floor(hours / 24)} day${Math.floor(hours / 24) > 1 ? 's' : ''} ago`;
+  banner.textContent = `Offline - Last updated: ${agoText}`;
+  banner.style.display = 'block';
+}
+
+function hideWeatherOfflineBanner() {
+  const banner = document.getElementById('weather-offline-banner');
+  if (banner) banner.style.display = 'none';
 }

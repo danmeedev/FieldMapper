@@ -10,9 +10,12 @@ let mapTrackPoints = [];
 let activeBase = 'topo';
 
 function initMapView() {
+  const defaultCenter = currentPosition
+    ? [currentPosition.lat, currentPosition.lon]
+    : [39.5, -98.35];
   const map = L.map('map', {
-    center: [39.5, -118.5],
-    zoom: 12,
+    center: defaultCenter,
+    zoom: currentPosition ? 14 : 5,
     zoomControl: true,
     maxZoom: 20
   });

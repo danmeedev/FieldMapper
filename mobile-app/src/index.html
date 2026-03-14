@@ -28,6 +28,7 @@
     <h3>Sync to Laptop</h3>
     <div id="gps-server-url-display" style="font-size:12px;color:#aaa;margin-bottom:6px">No server URL set. Go to Map > Settings.</div>
     <div id="gps-unsynced-count" style="text-align:center;font-size:20px;font-weight:bold;color:#90caf9;margin:6px 0">0 unsynced</div>
+    <div id="gps-last-sync" style="text-align:center;font-size:12px;color:#888;margin-bottom:4px">Never synced</div>
     <button class="btn btn-sync" id="gps-sync-btn" onclick="doSync()">Sync to Laptop</button>
     <div id="gps-sync-progress" class="sync-progress" style="display:none">
       <div id="gps-sync-bar" class="sync-progress-bar"></div>
@@ -38,6 +39,7 @@
   <!-- Recent marks -->
   <div class="section">
     <h3>Marked Locations (<span id="gps-total-count">0</span>)</h3>
+    <input type="text" id="gps-search-input" placeholder="Search by name, category, or notes..." style="width:100%;padding:8px;margin-bottom:8px;border:1px solid #444;border-radius:4px;background:#222;color:#fff;font-size:13px" oninput="filterGpsList()">
     <div id="gps-recent-list"></div>
   </div>
 
