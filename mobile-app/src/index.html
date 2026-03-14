@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#1a1a1a">
+  <title>Field Mapper</title>
+  <link rel="stylesheet" href="lib/leaflet.css">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<!-- ===== GPS VIEW ===== -->
+<div id="gps-view" class="view active">
+  <h2 style="text-align:center;font-size:18px;margin-bottom:8px">Field Mapper</h2>
+
+  <div id="gps-status-bar" class="status-bar warn">Starting GPS...</div>
+
+  <div class="gps-coords">
+    <div id="gps-coords-text" style="font-size:20px;font-family:monospace">-- , --</div>
+    <div id="gps-detail-text" class="gps-detail" style="margin-top:4px"></div>
+  </div>
+
+  <button class="btn btn-mark" onclick="openMarkForm()">Mark This Location</button>
+
+  <!-- Sync section -->
+  <div class="section">
+    <h3>Sync to Laptop</h3>
+    <div id="gps-server-url-display" style="font-size:12px;color:#aaa;margin-bottom:6px">No server URL set. Go to Map > Settings.</div>
+    <div id="gps-unsynced-count" style="text-align:center;font-size:20px;font-weight:bold;color:#90caf9;margin:6px 0">0 unsynced</div>
+    <button class="btn btn-sync" id="gps-sync-btn" onclick="doSync()">Sync to Laptop</button>
+    <div id="gps-sync-progress" class="sync-progress" style="display:none">
+      <div id="gps-sync-bar" class="sync-progress-bar"></div>
+    </div>
+    <div id="gps-sync-status" style="font-size:12px;text-align:center;margin-top:4px;min-height:18px"></div>
+  </div>
+
+  <!-- Recent marks -->
+  <div class="section">
+    <h3>Marked Locations (<span id="gps-total-count">0</span>)</h3>
+    <div id="gps-recent-list"></div>
+  </div>
+
+  <button class="btn btn-secondary" onclick="exportAllDataMobile()">Export All Data (JSON)</button>
+</div>
+
+<!-- Mark Location Overlay -->
+<div id="mark-overlay">
+  <h2 style="text-align:center;font-size:18px;margin-bottom:10px">Mark Location</h2>
+  <div id="captured-pos" style="text-align:center;font-family:monospace;font-size:13px;color:#aaa;margin-bottom:12px">Capturing GPS...</div>
+
+  <div class="form-group">
+    <label>Title</label>
+    <input type="text" id="wp-title" placeholder="e.g. Quartz outcrop, Old shaft">
+  </div>
+
+  <div class="form-group">
+    <label>Category</label>
+    <div class="category-grid">
+      <div class="cat-btn selected" data-cat="general" onclick="selectCat(this)">📍 General</div>
+      <div class="cat-btn" data-cat="sample" onclick="selectCat(this)">🧪 Sample</div>
+      <div class="cat-btn" data-cat="geology" onclick="selectCat(this)">🪨 Geology</div>
+      <div class="cat-btn" data-cat="hazard" onclick="selectCat(this)">⚠️ Hazard</div>
+      <div class="cat-btn" data-cat="water" onclick="selectCat(this)">💧 Water</div>
+      <div class="cat-btn" data-cat="camp" onclick="selectCat(this)">⛺ Camp</div>
+      <div class="cat-btn" data-cat="landmark" onclick="selectCat(this)">🏔️ Landmark</div>
+      <div class="cat-btn" data-cat="trail" onclick="selectCat(this)">🥾 Trail</div>
+      <div class="cat-btn" data-cat="vehicle" onclick="selectCat(this)">🚗 Vehicle</div>
+      <div class="cat-btn" data-cat="mineral" onclick="selectCat(this)">💎 Mineral</div>
+      <div class="cat-btn" data-cat="wildlife" onclick="selectCat(this)">🐾 Wildlife</div>
+      <div class="cat-btn" data-cat="vegetation" onclick="selectCat(this)">🌿 Vegetation</div>
+      <div class="cat-btn" data-cat="structure" onclick="selectCat(this)">🏗️ Structure</div>
+      <div class="cat-btn" data-cat="boundary" onclick="selectCat(this)">🚩 Boundary</div>
+      <div class="cat-btn" data-cat="custom" onclick="selectCat(this)">⭐ Custom</div>
+    </div>
+  </div>
+
+  <div class="form-group">
+    <label>Notes / Description</label>
+    <textarea id="wp-notes" placeholder="What are you seeing? Rock type, mineralization, structures, colors..."></textarea>
+  </div>
+
+  <div class="form-group">
+    <label>Photos</label>
+    <input type="file" id="photo-input" accept="image/*" multiple style="display:none">
+    <button class="btn btn-photo" onclick="takePhoto()">Add Photo</button>
+    <div id="photo-strip" class="photo-preview"></div>
+  </div>
+
+  <div id="sample-fields" style="display:none">
+    <div class="form-group">
+      <label>Sample ID</label>
+      <input type="text" id="sample-id" placeholder="S-001">
+    </div>
+    <div class="form-group">
+      <label>Sample Type</label>
+      <select id="sample-type">
+        <option value="rock">Rock Chip</option>
+        <option value="float">Float</option>
+        <option value="soil">Soil</option>
+        <option value="pan">Pan Concentrate</option>
+        <option value="channel">Channel Sample</option>
+        <option value="grab">Grab Sample</option>
+        <option value="outcrop">Outcrop</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Rock Type</label>
+      <select id="rock-type">
+        <option value="">-- Select --</option>
+        <option value="quartz">Quartz/Quartz Vein</option>
+        <option value="granite">Granite</option>
+        <option value="schist">Schist</option>
+        <option value="gneiss">Gneiss</option>
+        <option value="basalt">Basalt</option>
+        <option value="rhyolite">Rhyolite</option>
+        <option value="andesite">Andesite</option>
+        <option value="limestone">Limestone</option>
+        <option value="sandstone">Sandstone</option>
+        <option value="shale">Shale</option>
+        <option value="conglomerate">Conglomerate</option>
+        <option value="breccia">Breccia</option>
+        <option value="skarn">Skarn</option>
+        <option value="hornfels">Hornfels</option>
+        <option value="serpentinite">Serpentinite</option>
+        <option value="iron-oxide">Iron Oxide/Gossan</option>
+        <option value="sulfide">Sulfide Bearing</option>
+        <option value="alluvium">Alluvium</option>
+        <option value="other">Other</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Mineralization</label>
+      <select id="mineralization">
+        <option value="">-- Select --</option>
+        <option value="none">None Visible</option>
+        <option value="pyrite">Pyrite</option>
+        <option value="chalcopyrite">Chalcopyrite</option>
+        <option value="galena">Galena</option>
+        <option value="arsenopyrite">Arsenopyrite</option>
+        <option value="magnetite">Magnetite</option>
+        <option value="hematite">Hematite</option>
+        <option value="limonite">Limonite/Goethite</option>
+        <option value="malachite">Malachite</option>
+        <option value="azurite">Azurite</option>
+        <option value="chrysocolla">Chrysocolla</option>
+        <option value="free-gold">Visible Gold</option>
+        <option value="molybdenite">Molybdenite</option>
+        <option value="scheelite">Scheelite</option>
+        <option value="tourmaline">Tourmaline</option>
+        <option value="garnet">Garnet</option>
+        <option value="fluorite">Fluorite</option>
+        <option value="barite">Barite</option>
+        <option value="other">Other</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Alteration</label>
+      <select id="alteration">
+        <option value="">-- Select --</option>
+        <option value="none">None</option>
+        <option value="silicification">Silicification</option>
+        <option value="argillic">Argillic (Clay)</option>
+        <option value="sericitic">Sericitic</option>
+        <option value="propylitic">Propylitic</option>
+        <option value="potassic">Potassic</option>
+        <option value="iron-oxide">Iron Oxide Staining</option>
+        <option value="chloritic">Chloritic</option>
+        <option value="carbonate">Carbonate</option>
+        <option value="supergene">Supergene</option>
+      </select>
+    </div>
+  </div>
+
+  <button class="btn btn-save" onclick="saveGpsWaypoint()">Save Location</button>
+  <button class="btn btn-cancel" onclick="closeMarkForm()">Cancel</button>
+</div>
+
+<div class="saving-toast" id="saving-toast">Saved!</div>
+
+<!-- ===== GPS DATA VIEW ===== -->
+<div id="gps-data-view" class="view">
+  <div style="padding:12px;overflow-y:auto;height:100%;padding-bottom:70px">
+    <h2 style="text-align:center;font-size:18px;margin-bottom:10px">GPS Data</h2>
+
+    <!-- Compass -->
+    <div class="data-compass-wrap">
+      <div class="data-compass">
+        <div class="compass-ring">N</div>
+        <div id="compass-arrow" class="compass-arrow">▲</div>
+      </div>
+      <div id="data-heading" class="data-heading">--</div>
+    </div>
+
+    <!-- Speed & Altitude cards -->
+    <div class="data-cards">
+      <div class="data-card">
+        <div class="data-label">Speed</div>
+        <div class="data-value"><span id="data-speed">0.0</span> <span class="data-unit">mph</span></div>
+      </div>
+      <div class="data-card">
+        <div class="data-label">Altitude</div>
+        <div class="data-value" id="data-altitude">--</div>
+      </div>
+      <div class="data-card">
+        <div class="data-label">Accuracy</div>
+        <div class="data-value" id="data-accuracy">--</div>
+      </div>
+      <div class="data-card">
+        <div class="data-label">Coordinates</div>
+        <div class="data-value" id="data-coords" style="font-size:13px">--</div>
+      </div>
+    </div>
+
+    <!-- Trip controls -->
+    <div style="display:flex;gap:8px;margin:12px 0">
+      <button class="btn" id="trip-start-btn" style="flex:1;background:#4caf50">Start Trip</button>
+      <button class="btn" id="trip-reset-btn" style="flex:1;background:#555">Reset</button>
+    </div>
+
+    <!-- Trip stats -->
+    <div class="data-cards">
+      <div class="data-card">
+        <div class="data-label">Trip Distance</div>
+        <div class="data-value" id="data-trip-distance">0 ft</div>
+      </div>
+      <div class="data-card">
+        <div class="data-label">Trip Time</div>
+        <div class="data-value" id="data-trip-time">0:00</div>
+      </div>
+      <div class="data-card">
+        <div class="data-label">Max Speed</div>
+        <div class="data-value" id="data-max-speed">0.0 mph</div>
+      </div>
+      <div class="data-card">
+        <div class="data-label">Avg Speed</div>
+        <div class="data-value" id="data-avg-speed">0.0 mph</div>
+      </div>
+      <div class="data-card">
+        <div class="data-label">Elev Gain</div>
+        <div class="data-value" id="data-elev-gain">+0 ft</div>
+      </div>
+      <div class="data-card">
+        <div class="data-label">Elev Loss</div>
+        <div class="data-value" id="data-elev-loss">-0 ft</div>
+      </div>
+      <div class="data-card">
+        <div class="data-label">Max Altitude</div>
+        <div class="data-value" id="data-max-alt">--</div>
+      </div>
+      <div class="data-card">
+        <div class="data-label">Min Altitude</div>
+        <div class="data-value" id="data-min-alt">--</div>
+      </div>
+    </div>
+
+    <!-- Track recording -->
+    <div style="margin:12px 0">
+      <button class="btn" id="record-track-btn" style="background:#1565c0">Record Track</button>
+    </div>
+    <div id="recording-indicator" style="display:none;text-align:center;color:#f44336;font-weight:bold;font-size:14px;animation:blink 1s infinite">⏺ Recording Track...</div>
+  </div>
+</div>
+
+<!-- ===== MAP VIEW ===== -->
+<div id="map-view" class="view">
+  <div id="map"></div>
+
+  <div id="map-controls">
+    <div id="map-gps-status" style="font-weight:bold;font-size:12px;font-family:monospace">Waiting for GPS...</div>
+    <div id="map-coords" style="font-size:11px;color:#aaa"></div>
+  </div>
+
+  <!-- Hamburger menu button -->
+  <button id="map-menu-btn" class="map-hamburger" onclick="toggleMapMenu()">&#9776;</button>
+  <div id="map-menu-dropdown" class="map-menu-dropdown">
+    <button id="toggle-layers" class="map-menu-item">Layers</button>
+    <button id="toggle-pins" class="map-menu-item">Pins</button>
+    <button id="toggle-routes" class="map-menu-item">Routes</button>
+    <button id="measure-btn" class="map-menu-item">Measure</button>
+    <button id="map-drop-pin-menu" class="map-menu-item" onclick="triggerDropPin()">Drop Pin</button>
+    <button id="toggle-download" class="map-menu-item">Download Tiles</button>
+    <button id="print-route-btn" class="map-menu-item" onclick="showPrintRouteDialog()">Print Route Map</button>
+    <button id="backup-data-btn" class="map-menu-item" onclick="backupAllData()">Backup to Laptop</button>
+    <button id="toggle-map-settings" class="map-menu-item">Settings</button>
+  </div>
+
+  <!-- Measure info bar -->
+  <div id="measure-info" class="measure-info" style="display:none"></div>
+
+  <!-- Measure controls (shown when measuring) -->
+  <div id="measure-controls" style="position:absolute;bottom:50px;right:10px;z-index:1000;display:flex;gap:4px">
+    <button id="measure-undo-btn" class="toolbar-btn" style="font-size:11px">Undo</button>
+    <button id="measure-clear-btn" class="toolbar-btn" style="font-size:11px">Clear</button>
+  </div>
+
+  <!-- Layers panel -->
+  <div id="map-layers-panel" class="side-panel">
+    <h3>Layers</h3>
+    <h4>Topo / Street</h4>
+    <label><input type="radio" name="base" value="topo" checked> USGS Topo</label>
+    <label><input type="radio" name="base" value="esri-topo"> ESRI Topo (z19)</label>
+    <label><input type="radio" name="base" value="esri-street"> ESRI Street (z19)</label>
+    <label><input type="radio" name="base" value="natgeo"> NatGeo</label>
+    <h4>Satellite</h4>
+    <label><input type="radio" name="base" value="satellite"> USGS Satellite</label>
+    <label><input type="radio" name="base" value="satellite-hd"> ESRI HD (z20)</label>
+    <label><input type="radio" name="base" value="imagery-topo"> Imagery + Topo</label>
+    <h4>Terrain</h4>
+    <label><input type="radio" name="base" value="relief"> Shaded Relief</label>
+    <label><input type="radio" name="base" value="terrain"> Terrain Base</label>
+    <label><input type="radio" name="base" value="blm"> BLM Surface Mgmt</label>
+    <hr>
+    <h4>Overlays</h4>
+    <label><input type="checkbox" id="overlay-streets"> Streets &amp; Roads</label>
+    <label><input type="checkbox" id="overlay-labels"> Place Names</label>
+    <label><input type="checkbox" id="overlay-contours"> Topo Contours</label>
+    <div id="legend-contours" class="layer-legend" style="display:none">
+      <div class="legend-title">Contour Lines</div>
+      <div class="legend-entry"><span class="legend-line" style="border-color:#8B4513"></span> Index (100ft)</div>
+      <div class="legend-entry"><span class="legend-line" style="border-color:#A0522D;border-style:dashed"></span> Intermediate (20ft)</div>
+    </div>
+    <label><input type="checkbox" id="overlay-hydro"> Hydro</label>
+    <label><input type="checkbox" id="overlay-trails"> Hiking Trails</label>
+    <div id="legend-trails" class="layer-legend" style="display:none">
+      <div class="legend-title">Trail Markers</div>
+      <div class="legend-entry"><span class="legend-swatch" style="background:#e41a1c"></span> Major Hiking Route</div>
+      <div class="legend-entry"><span class="legend-swatch" style="background:#ff7f00"></span> Regional Trail</div>
+      <div class="legend-entry"><span class="legend-swatch" style="background:#984ea3"></span> Local/Other Trail</div>
+    </div>
+    <label><input type="checkbox" id="overlay-land"> Land Ownership</label>
+    <div id="legend-land" class="layer-legend" style="display:none">
+      <div class="legend-title">Land Ownership (BLM SMA)</div>
+      <div class="legend-entry"><span class="legend-swatch" style="background:#FDE68A"></span> BLM Land</div>
+      <div class="legend-entry"><span class="legend-swatch" style="background:#86EFAC"></span> Forest Service (USFS)</div>
+      <div class="legend-entry"><span class="legend-swatch" style="background:#93C5FD"></span> National Park Service</div>
+      <div class="legend-entry"><span class="legend-swatch" style="background:#C4B5FD"></span> Fish &amp; Wildlife</div>
+      <div class="legend-entry"><span class="legend-swatch" style="background:#FDA4AF"></span> Dept of Defense</div>
+      <div class="legend-entry"><span class="legend-swatch" style="background:#D1D5DB"></span> State Land</div>
+      <div class="legend-entry"><span class="legend-swatch" style="background:#F9FAFB;border:1px solid #666"></span> Private / Unknown</div>
+      <div class="legend-entry"><span class="legend-swatch" style="background:#6EE7B7"></span> Tribal / Reservation</div>
+      <div class="legend-entry"><span class="legend-swatch" style="background:#A78BFA"></span> Bureau of Reclamation</div>
+    </div>
+    <hr>
+    <h4>Weather</h4>
+    <label><input type="checkbox" id="overlay-radar"> NOAA Radar</label>
+    <div id="legend-radar" class="layer-legend" style="display:none">
+      <div class="legend-title">Radar Reflectivity (dBZ)</div>
+      <div class="legend-gradient">
+        <div class="legend-grad-bar"></div>
+        <div class="legend-grad-labels">
+          <span style="color:#00ff00">Light</span>
+          <span style="color:#ffff00">Mod</span>
+          <span style="color:#ff0000">Heavy</span>
+          <span style="color:#ff00ff">Extreme</span>
+        </div>
+      </div>
+    </div>
+    <label><input type="checkbox" id="overlay-wind"> Wind Speed</label>
+    <div id="legend-wind" class="layer-legend" style="display:none">
+      <div class="legend-title">Wind Speed</div>
+      <div class="legend-entry"><span class="legend-swatch" style="background:#a8d5f2"></span> 0-10 mph (Calm)</div>
+      <div class="legend-entry"><span class="legend-swatch" style="background:#4da6e0"></span> 10-20 mph (Breezy)</div>
+      <div class="legend-entry"><span class="legend-swatch" style="background:#f5d442"></span> 20-30 mph (Windy)</div>
+      <div class="legend-entry"><span class="legend-swatch" style="background:#f59e42"></span> 30-40 mph (High)</div>
+      <div class="legend-entry"><span class="legend-swatch" style="background:#e84545"></span> 40+ mph (Dangerous)</div>
+    </div>
+    <hr>
+    <label><input type="checkbox" id="show-track" checked> Show Track</label>
+    <button id="clear-track" class="panel-action">Clear Track</button>
+    <button id="center-gps" class="panel-action">Center on GPS</button>
+    <label><input type="checkbox" id="auto-center" checked> Auto-center</label>
+    <hr>
+    <div id="map-cache-stats" style="font-size:11px;color:#aaa">Loading...</div>
+  </div>
+
+  <!-- Pins panel -->
+  <div id="map-pins-panel" class="side-panel">
+    <h3>Pins (<span id="map-pin-count">0</span>)</h3>
+    <div id="map-pin-list" class="wp-list"></div>
+    <hr>
+    <h4>Navigate to Pin</h4>
+    <p style="font-size:11px;color:#888">Tap a pin on the map, then use "Navigate" in its popup.</p>
+    <hr>
+    <h4>Legend</h4>
+    <div id="map-legend"></div>
+  </div>
+
+  <!-- Routes panel -->
+  <div id="map-routes-panel" class="side-panel">
+    <h3>Routes</h3>
+    <button id="new-route-btn" class="panel-action" style="background:#00897b">New Route</button>
+    <button id="track-to-route-btn" class="panel-action" style="background:#7b1fa2">Convert Recorded Track</button>
+    <hr>
+    <div id="route-list"></div>
+    <p style="font-size:11px;color:#666;margin-top:8px">Create routes with labeled points, access info, hazards, and photos. Use "Nav" to follow a route.</p>
+  </div>
+
+  <!-- Map Navigation Panel (shown during route nav) -->
+  <div id="map-nav-panel" style="display:none;position:absolute;bottom:50px;left:0;right:0;z-index:1001;background:rgba(0,0,0,0.93);padding:10px 12px;border-top:2px solid #00e676;max-height:45%">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <div id="map-nav-route-name" style="font-weight:bold;font-size:14px;color:#00e676">Route</div>
+      <div style="display:flex;gap:4px">
+        <button onclick="mapNavFullscreen()" style="padding:4px 8px;background:#1565c0;color:#fff;border:none;border-radius:4px;font-size:11px">Compass</button>
+        <button onclick="stopMapNavigation()" style="padding:4px 8px;background:#d32f2f;color:#fff;border:none;border-radius:4px;font-size:11px">Stop</button>
+      </div>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <button id="map-nav-prev-btn" onclick="mapNavPrev()" class="nav-ctrl-btn">&lt; Prev</button>
+      <div style="text-align:center">
+        <div id="map-nav-point-num" style="font-size:12px;color:#888">1 / 1</div>
+        <div id="map-nav-point-label" style="font-weight:bold;font-size:15px">--</div>
+      </div>
+      <button id="map-nav-next-btn" onclick="mapNavNext()" class="nav-ctrl-btn">Next &gt;</button>
+    </div>
+    <div id="map-nav-access" style="font-size:12px;margin-bottom:4px"></div>
+    <div id="map-nav-distance" style="font-family:monospace;font-size:14px;color:#90caf9;margin-bottom:4px">--</div>
+    <div id="map-nav-info" style="font-size:12px;max-height:120px;overflow-y:auto"></div>
+  </div>
+
+  <!-- Download panel -->
+  <div id="map-download-panel" class="side-panel">
+    <h3>Download Area</h3>
+    <p style="font-size:12px;color:#aaa;margin-bottom:8px">Download tiles for offline use.</p>
+    <button id="download-area-btn" class="panel-action" style="background:#00897b">Download Visible Area</button>
+    <div id="download-status" class="download-progress"></div>
+  </div>
+
+  <!-- Settings panel -->
+  <div id="map-settings-panel" class="side-panel">
+    <h3>Settings</h3>
+    <div class="form-group">
+      <label>Laptop Server URL</label>
+      <input type="text" id="laptop-url-input" placeholder="http://192.168.1.100:3000" style="padding:8px;border:1px solid #444;border-radius:4px;background:#222;color:#fff;font-size:13px">
+    </div>
+    <button id="save-map-settings" class="panel-action">Save &amp; Test</button>
+    <div id="map-settings-status" style="font-size:12px;color:#4caf50;margin-top:4px"></div>
+    <p style="font-size:11px;color:#888;margin-top:8px">
+      <b>How to connect:</b><br>
+      1. Connect phone and laptop to the same WiFi<br>
+      2. On the laptop, run the server and note the URL shown<br>
+      3. Enter it here, e.g. <code>http://192.168.1.5:3000</code><br>
+      4. Use HTTP (not HTTPS) for local network sync
+    </p>
+  </div>
+
+  <!-- Coordinate search -->
+  <div id="coord-search">
+    <input type="text" id="coord-input" placeholder="39.5, -118.5 or DMS/UTM">
+    <button id="coord-go">Go</button>
+  </div>
+</div>
+
+<!-- ===== WEATHER VIEW ===== -->
+<div id="weather-view" class="view">
+  <div style="padding:12px;overflow-y:auto;height:100%;padding-bottom:70px">
+    <h2 style="text-align:center;font-size:18px;margin-bottom:10px">Weather</h2>
+    <button class="btn btn-sync" id="weather-refresh-btn">Refresh Weather</button>
+    <div id="weather-status" style="font-size:12px;text-align:center;margin:6px 0;min-height:18px"></div>
+    <div id="weather-content"></div>
+  </div>
+</div>
+
+<!-- Navigation Overlay -->
+<div id="nav-overlay" style="display:none">
+  <div class="nav-header">
+    <div id="nav-target-name" style="font-size:16px;font-weight:bold">--</div>
+    <button id="nav-close-btn" style="background:#d32f2f;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:14px">X</button>
+  </div>
+  <div class="nav-compass-wrap">
+    <div class="nav-compass-ring">
+      <div class="nav-compass-n">N</div>
+      <div id="nav-compass-arrow" class="nav-arrow">&#9650;</div>
+    </div>
+  </div>
+  <div class="nav-stats">
+    <div class="nav-stat">
+      <div class="nav-stat-label">Distance</div>
+      <div class="nav-stat-value" id="nav-distance">--</div>
+    </div>
+    <div class="nav-stat">
+      <div class="nav-stat-label">Bearing</div>
+      <div class="nav-stat-value" id="nav-bearing">--</div>
+    </div>
+    <div class="nav-stat">
+      <div class="nav-stat-label">ETA</div>
+      <div class="nav-stat-value" id="nav-eta">--</div>
+    </div>
+  </div>
+  <!-- Route point controls -->
+  <div id="nav-route-controls" style="display:none;width:100%;margin-top:10px">
+    <div style="display:flex;justify-content:center;gap:12px;margin-bottom:8px">
+      <button id="nav-prev-btn" class="nav-ctrl-btn">&lt; Prev Point</button>
+      <button id="nav-next-btn" class="nav-ctrl-btn">Next Point &gt;</button>
+    </div>
+    <div id="nav-point-info" style="background:rgba(255,255,255,0.08);border-radius:8px;padding:10px;max-height:180px;overflow-y:auto;width:100%"></div>
+  </div>
+</div>
+
+<!-- Route Builder Overlay -->
+<div id="route-builder-overlay" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:7500;background:#111;border-top:2px solid #00e676;max-height:55%;overflow-y:auto;padding:12px;padding-bottom:20px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+    <h3 style="font-size:16px;color:#00e676;margin:0">Route Builder</h3>
+    <div style="font-size:12px;color:#aaa"><span id="rb-point-count">0</span> points | <span id="rb-total-dist">0 ft</span></div>
+  </div>
+  <div class="form-group" style="margin-bottom:6px">
+    <input type="text" id="rb-route-name" placeholder="Route name (required)" style="padding:8px;border:1px solid #444;border-radius:4px;background:#222;color:#fff;font-size:13px;width:100%">
+  </div>
+  <div class="form-group" style="margin-bottom:6px">
+    <textarea id="rb-route-desc" placeholder="Description (optional)" rows="1" style="padding:8px;border:1px solid #444;border-radius:4px;background:#222;color:#fff;font-size:12px;width:100%;resize:none"></textarea>
+  </div>
+  <div style="font-size:11px;color:#888;margin-bottom:6px">Tap the map to add points. Drag points to reposition. Tap a point to edit details.</div>
+  <div id="rb-point-list" style="max-height:180px;overflow-y:auto;margin-bottom:8px"></div>
+  <div style="display:flex;gap:6px">
+    <button onclick="undoRoutePoint()" class="btn" style="flex:1;padding:8px;background:#555;font-size:12px">Undo</button>
+    <button onclick="saveRouteBuilder()" class="btn" style="flex:2;padding:8px;background:#00897b;font-size:13px">Save Route</button>
+    <button onclick="cancelRouteBuilder()" class="btn" style="flex:1;padding:8px;background:#d32f2f;font-size:12px">Cancel</button>
+  </div>
+</div>
+
+<!-- Point Editor Overlay -->
+<div id="point-editor-overlay" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:8500;background:#1a1a1a;overflow-y:auto;padding:12px;padding-bottom:80px">
+  <h2 id="pe-title" style="text-align:center;font-size:18px;margin-bottom:4px">Edit Point</h2>
+  <div id="pe-coords" style="text-align:center;font-family:monospace;font-size:12px;color:#666;margin-bottom:10px"></div>
+  <div class="form-group">
+    <label>Label</label>
+    <input type="text" id="pe-label" placeholder="e.g. Trailhead, River crossing">
+  </div>
+  <div class="form-group">
+    <label>Access Type</label>
+    <select id="pe-access" style="width:100%;padding:10px;border:1px solid #444;border-radius:6px;background:#222;color:#fff;font-size:14px">
+      <option value="any">Any Vehicle</option>
+      <option value="utv">UTV/ATV Only</option>
+      <option value="foot">Foot Access Only</option>
+      <option value="rope">Rope/Climbing Required</option>
+      <option value="scramble">Scramble/Technical</option>
+    </select>
+  </div>
+  <div class="form-group">
+    <label>Hazards</label>
+    <textarea id="pe-hazards" placeholder="Loose rock, steep drop-off, flash flood area..." rows="2" style="resize:none"></textarea>
+  </div>
+  <div class="form-group">
+    <label>Landmarks to Look For</label>
+    <textarea id="pe-landmarks" placeholder="Large white quartz boulder, old mine shaft..." rows="2" style="resize:none"></textarea>
+  </div>
+  <div class="form-group">
+    <label>Notes / Directions</label>
+    <textarea id="pe-notes" placeholder="Take left fork, stay on ridge, cross creek..." rows="3"></textarea>
+  </div>
+  <div class="form-group">
+    <label>Photos</label>
+    <div id="pe-photo-strip" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px"></div>
+    <input type="file" id="pe-photo-input" accept="image/*" multiple style="display:none" onchange="handlePointPhoto(this)">
+    <button class="btn btn-photo" onclick="addPointPhoto()">Add Photo</button>
+  </div>
+  <button class="btn btn-save" onclick="savePointEdit()">Save Point</button>
+  <button class="btn btn-cancel" onclick="cancelPointEdit()">Cancel</button>
+</div>
+
+<!-- ===== TAB BAR ===== -->
+<div id="tab-bar">
+  <button class="tab-btn active" data-tab="gps">
+    <span class="tab-icon">📍</span>
+    GPS
+  </button>
+  <button class="tab-btn" data-tab="gps-data">
+    <span class="tab-icon">📊</span>
+    Data
+  </button>
+  <button class="tab-btn" data-tab="map">
+    <span class="tab-icon">🗺️</span>
+    Map
+  </button>
+  <button class="tab-btn" data-tab="weather">
+    <span class="tab-icon">🌤️</span>
+    Weather
+  </button>
+</div>
+
+<!-- Scripts: order matters -->
+<script src="lib/leaflet.js"></script>
+<script src="js/waypoint-store.js"></script>
+<script src="js/tile-cache.js"></script>
+<script src="js/sync-engine.js"></script>
+<script src="js/gps-data.js"></script>
+<script src="js/measure.js"></script>
+<script src="js/navigation.js"></script>
+<script src="js/route-builder.js"></script>
+<script src="js/weather.js"></script>
+<script src="js/app.js"></script>
+<script src="js/gps-view.js"></script>
+<script src="js/map-view.js"></script>
+</body>
+</html>

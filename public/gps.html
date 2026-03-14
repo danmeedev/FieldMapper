@@ -1,0 +1,932 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Field Mapper</title>
+  <!-- PWA -->
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#1a1a1a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Field Mapper">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <!-- Cache this page for offline use -->
+  <meta http-equiv="Cache-Control" content="max-age=31536000, immutable">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #1a1a1a;
+      color: #fff;
+      min-height: 100vh;
+      padding: 12px;
+      padding-bottom: 80px;
+    }
+    h2 { font-size: 18px; text-align: center; margin-bottom: 10px; }
+
+    .status {
+      text-align: center;
+      padding: 8px;
+      border-radius: 6px;
+      margin-bottom: 10px;
+      font-weight: bold;
+      font-size: 14px;
+    }
+    .status.ok { background: #1b5e20; }
+    .status.error { background: #b71c1c; }
+    .status.waiting { background: #e65100; }
+    .status.offline { background: #333; color: #aaa; }
+
+    .coords {
+      background: #2a2a2a;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 10px;
+      text-align: center;
+    }
+    .coords .big { font-size: 20px; font-weight: bold; font-family: monospace; }
+    .coords .detail { font-size: 12px; color: #aaa; margin-top: 4px; }
+
+    .section {
+      background: #2a2a2a;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 10px;
+    }
+    .section h3 { font-size: 14px; margin-bottom: 8px; color: #90caf9; }
+
+    #mark-btn {
+      display: block;
+      width: 100%;
+      padding: 20px;
+      border: none;
+      border-radius: 12px;
+      font-size: 20px;
+      font-weight: bold;
+      cursor: pointer;
+      color: #fff;
+      background: linear-gradient(135deg, #1976d2, #1565c0);
+      margin-bottom: 10px;
+      box-shadow: 0 4px 12px rgba(25,118,210,0.4);
+    }
+    #mark-btn:active { transform: scale(0.97); }
+
+    #mark-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: #1a1a1a;
+      z-index: 100;
+      overflow-y: auto;
+      padding: 12px;
+      padding-bottom: 40px;
+    }
+    #mark-overlay.visible { display: block; }
+    #mark-overlay h2 { margin-bottom: 14px; }
+
+    .form-group { margin-bottom: 10px; }
+    .form-group label { display: block; font-size: 12px; color: #aaa; margin-bottom: 3px; }
+
+    input, textarea, select {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #444;
+      border-radius: 6px;
+      background: #333;
+      color: #fff;
+      font-size: 15px;
+    }
+    textarea { height: 80px; resize: vertical; font-size: 14px; }
+
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      margin-bottom: 8px;
+      color: #fff;
+    }
+    .btn:active { opacity: 0.7; }
+    .btn:disabled { opacity: 0.5; }
+    .btn-save { background: #2e7d32; }
+    .btn-cancel { background: #555; }
+    .btn-photo { background: #1565c0; }
+    .btn-sync { background: #00897b; }
+    .btn-export { background: #455a64; }
+
+    .category-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 6px;
+    }
+    .cat-btn {
+      padding: 10px 4px;
+      border: 2px solid #444;
+      border-radius: 8px;
+      background: #333;
+      color: #fff;
+      font-size: 12px;
+      text-align: center;
+      cursor: pointer;
+    }
+    .cat-btn.selected { border-color: #2196f3; background: #1a3a5c; }
+
+    .photo-strip {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding: 8px 0;
+    }
+    .photo-thumb {
+      position: relative;
+      flex-shrink: 0;
+    }
+    .photo-thumb img {
+      width: 80px;
+      height: 80px;
+      object-fit: cover;
+      border-radius: 6px;
+      border: 2px solid #444;
+    }
+    .photo-thumb .remove-photo {
+      position: absolute;
+      top: -6px;
+      right: -6px;
+      width: 22px;
+      height: 22px;
+      background: #c62828;
+      border: none;
+      border-radius: 50%;
+      color: #fff;
+      font-size: 14px;
+      line-height: 22px;
+      text-align: center;
+      cursor: pointer;
+    }
+
+    .captured-pos {
+      background: #1b3a1b;
+      border-radius: 6px;
+      padding: 8px;
+      font-family: monospace;
+      font-size: 13px;
+      margin-bottom: 10px;
+      text-align: center;
+    }
+
+    .recent-list { max-height: 400px; overflow-y: auto; }
+    .recent-item {
+      padding: 10px;
+      border-bottom: 1px solid #333;
+    }
+    .recent-item .name { font-weight: bold; font-size: 14px; }
+    .recent-item .info { color: #aaa; font-size: 12px; margin-top: 2px; }
+    .recent-item .thumb-row {
+      display: flex;
+      gap: 4px;
+      margin-top: 4px;
+    }
+    .recent-item .thumb-row img {
+      width: 40px;
+      height: 40px;
+      object-fit: cover;
+      border-radius: 4px;
+    }
+
+    .saving-toast {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(46,125,50,0.95);
+      color: #fff;
+      padding: 20px 30px;
+      border-radius: 12px;
+      font-size: 18px;
+      font-weight: bold;
+      z-index: 200;
+      display: none;
+    }
+    .saving-toast.visible { display: block; }
+
+    #photo-input { display: none; }
+
+    /* Sync section */
+    .sync-info {
+      font-size: 12px;
+      color: #aaa;
+      margin-bottom: 8px;
+      line-height: 1.4;
+    }
+    .sync-count {
+      text-align: center;
+      font-size: 24px;
+      font-weight: bold;
+      color: #90caf9;
+      margin: 6px 0;
+    }
+    .sync-progress {
+      background: #333;
+      border-radius: 4px;
+      height: 6px;
+      margin: 8px 0;
+      overflow: hidden;
+    }
+    .sync-progress-bar {
+      height: 100%;
+      background: #00897b;
+      width: 0%;
+      transition: width 0.3s;
+    }
+    .sync-status-text {
+      font-size: 12px;
+      text-align: center;
+      margin-top: 6px;
+      min-height: 18px;
+    }
+  </style>
+</head>
+<body>
+  <h2>Field Mapper</h2>
+  <div id="status" class="status offline">Standalone Mode - GPS starting...</div>
+
+  <div class="coords">
+    <div class="big" id="coords">-- , --</div>
+    <div class="detail" id="detail"></div>
+  </div>
+
+  <button id="mark-btn" onclick="openMarkForm()">Mark This Location</button>
+
+  <!-- Sync to Laptop -->
+  <div class="section">
+    <h3>Sync to Laptop</h3>
+    <div class="sync-info">When you're back at camp, connect to the same network as your laptop and sync your field data.</div>
+    <div class="sync-count" id="unsynced-count">0 unsynced</div>
+    <button class="btn btn-sync" id="sync-btn" onclick="syncToLaptop()">Sync to Laptop</button>
+    <div class="sync-progress" id="sync-progress" style="display:none">
+      <div class="sync-progress-bar" id="sync-bar"></div>
+    </div>
+    <div class="sync-status-text" id="sync-status"></div>
+  </div>
+
+  <!-- Recent Marks -->
+  <div class="section">
+    <h3>Marked Locations (<span id="total-count">0</span>)</h3>
+    <div class="recent-list" id="recent-list"></div>
+  </div>
+
+  <button class="btn btn-export" onclick="exportPhoneData()">Export All Data (JSON)</button>
+
+  <!-- Mark Location Overlay Form -->
+  <div id="mark-overlay">
+    <h2>Mark Location</h2>
+    <div class="captured-pos" id="captured-pos">Capturing GPS...</div>
+
+    <div class="form-group">
+      <label>Title</label>
+      <input type="text" id="wp-title" placeholder="e.g. Quartz outcrop, Old shaft, Sample site">
+    </div>
+
+    <div class="form-group">
+      <label>Category</label>
+      <div class="category-grid">
+        <div class="cat-btn selected" data-cat="general" onclick="selectCat(this)">📍 General</div>
+        <div class="cat-btn" data-cat="sample" onclick="selectCat(this)">🧪 Sample</div>
+        <div class="cat-btn" data-cat="geology" onclick="selectCat(this)">🪨 Geology</div>
+        <div class="cat-btn" data-cat="hazard" onclick="selectCat(this)">⚠️ Hazard</div>
+        <div class="cat-btn" data-cat="water" onclick="selectCat(this)">💧 Water</div>
+        <div class="cat-btn" data-cat="camp" onclick="selectCat(this)">⛺ Camp</div>
+        <div class="cat-btn" data-cat="landmark" onclick="selectCat(this)">🏔️ Landmark</div>
+        <div class="cat-btn" data-cat="trail" onclick="selectCat(this)">🥾 Trail</div>
+        <div class="cat-btn" data-cat="vehicle" onclick="selectCat(this)">🚗 Vehicle</div>
+        <div class="cat-btn" data-cat="mineral" onclick="selectCat(this)">💎 Mineral</div>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>Notes / Description</label>
+      <textarea id="wp-notes" placeholder="What are you seeing? Rock type, mineralization, structures, colors, anything useful..."></textarea>
+    </div>
+
+    <div class="form-group">
+      <label>Photos</label>
+      <input type="file" id="photo-input" accept="image/*" capture="environment" multiple>
+      <button class="btn btn-photo" onclick="takePhoto()">Add Photo</button>
+      <div class="photo-strip" id="photo-strip"></div>
+    </div>
+
+    <div id="sample-fields" style="display:none">
+      <div class="form-group">
+        <label>Sample ID</label>
+        <input type="text" id="sample-id" placeholder="S-001">
+      </div>
+      <div class="form-group">
+        <label>Sample Type</label>
+        <select id="sample-type">
+          <option value="rock">Rock Chip</option>
+          <option value="float">Float</option>
+          <option value="soil">Soil</option>
+          <option value="pan">Pan Concentrate</option>
+          <option value="channel">Channel Sample</option>
+          <option value="grab">Grab Sample</option>
+          <option value="outcrop">Outcrop</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Rock Type</label>
+        <select id="rock-type">
+          <option value="">-- Select --</option>
+          <option value="quartz">Quartz/Quartz Vein</option>
+          <option value="granite">Granite</option>
+          <option value="schist">Schist</option>
+          <option value="gneiss">Gneiss</option>
+          <option value="basalt">Basalt</option>
+          <option value="rhyolite">Rhyolite</option>
+          <option value="andesite">Andesite</option>
+          <option value="limestone">Limestone</option>
+          <option value="sandstone">Sandstone</option>
+          <option value="shale">Shale</option>
+          <option value="conglomerate">Conglomerate</option>
+          <option value="breccia">Breccia</option>
+          <option value="skarn">Skarn</option>
+          <option value="hornfels">Hornfels</option>
+          <option value="serpentinite">Serpentinite</option>
+          <option value="iron-oxide">Iron Oxide/Gossan</option>
+          <option value="sulfide">Sulfide Bearing</option>
+          <option value="alluvium">Alluvium</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Mineralization</label>
+        <select id="mineralization">
+          <option value="">-- Select --</option>
+          <option value="none">None Visible</option>
+          <option value="pyrite">Pyrite</option>
+          <option value="chalcopyrite">Chalcopyrite</option>
+          <option value="galena">Galena</option>
+          <option value="arsenopyrite">Arsenopyrite</option>
+          <option value="magnetite">Magnetite</option>
+          <option value="hematite">Hematite</option>
+          <option value="limonite">Limonite/Goethite</option>
+          <option value="malachite">Malachite</option>
+          <option value="azurite">Azurite</option>
+          <option value="chrysocolla">Chrysocolla</option>
+          <option value="free-gold">Visible Gold</option>
+          <option value="molybdenite">Molybdenite</option>
+          <option value="scheelite">Scheelite</option>
+          <option value="tourmaline">Tourmaline</option>
+          <option value="garnet">Garnet</option>
+          <option value="fluorite">Fluorite</option>
+          <option value="barite">Barite</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Alteration</label>
+        <select id="alteration">
+          <option value="">-- Select --</option>
+          <option value="none">None</option>
+          <option value="silicification">Silicification</option>
+          <option value="argillic">Argillic (Clay)</option>
+          <option value="sericitic">Sericitic</option>
+          <option value="propylitic">Propylitic</option>
+          <option value="potassic">Potassic</option>
+          <option value="iron-oxide">Iron Oxide Staining</option>
+          <option value="chloritic">Chloritic</option>
+          <option value="carbonate">Carbonate</option>
+          <option value="supergene">Supergene</option>
+        </select>
+      </div>
+    </div>
+
+    <button class="btn btn-save" onclick="saveWaypoint()">Save Location</button>
+    <button class="btn btn-cancel" onclick="closeMarkForm()">Cancel</button>
+  </div>
+
+  <div class="saving-toast" id="saving-toast">Saved!</div>
+
+  <script>
+    // ---- IndexedDB for photos (localStorage can't handle large images reliably) ----
+    let db = null;
+    const DB_NAME = 'fieldmapper';
+    const DB_VERSION = 1;
+
+    function openDB() {
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open(DB_NAME, DB_VERSION);
+        req.onupgradeneeded = (e) => {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains('photos')) {
+            db.createObjectStore('photos', { keyPath: 'id' });
+          }
+        };
+        req.onsuccess = (e) => { db = e.target.result; resolve(db); };
+        req.onerror = (e) => reject(e);
+      });
+    }
+
+    function savePhotoDB(waypointId, photos) {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('photos', 'readwrite');
+        const store = tx.objectStore('photos');
+        store.put({ id: waypointId, photos: photos });
+        tx.oncomplete = () => resolve();
+        tx.onerror = (e) => reject(e);
+      });
+    }
+
+    function getPhotoDB(waypointId) {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('photos', 'readonly');
+        const store = tx.objectStore('photos');
+        const req = store.get(waypointId);
+        req.onsuccess = () => resolve(req.result ? req.result.photos : []);
+        req.onerror = (e) => reject(e);
+      });
+    }
+
+    function getAllPhotoDB() {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('photos', 'readonly');
+        const store = tx.objectStore('photos');
+        const req = store.getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = (e) => reject(e);
+      });
+    }
+
+    // ---- State ----
+    let currentPos = null;
+    let capturedPos = null;
+    let waypointCount = parseInt(localStorage.getItem('fm-wp-count') || '0');
+    let sampleCount = parseInt(localStorage.getItem('fm-sample-count') || '0');
+    let phoneWaypoints = JSON.parse(localStorage.getItem('fm-phone-waypoints') || '[]');
+    let pendingPhotos = [];
+    let selectedCategory = 'general';
+
+    // ---- WebSocket to laptop (streams GPS live when connected) ----
+    let ws = null;
+    let wsConnected = false;
+
+    function connectWS() {
+      try {
+        const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        ws = new WebSocket(`${wsProtocol}//${location.host}?role=gps`);
+
+        ws.onopen = () => {
+          wsConnected = true;
+          updateStatusDisplay();
+        };
+
+        ws.onclose = () => {
+          wsConnected = false;
+          updateStatusDisplay();
+          // Retry every 5s — don't spam when offline in the field
+          setTimeout(connectWS, 5000);
+        };
+
+        ws.onerror = () => {
+          wsConnected = false;
+        };
+      } catch (e) {
+        // Offline — no server to connect to, that's fine
+        wsConnected = false;
+        setTimeout(connectWS, 10000);
+      }
+    }
+
+    connectWS();
+
+    function updateStatusDisplay() {
+      const statusEl = document.getElementById('status');
+      if (!currentPos) {
+        statusEl.textContent = 'Waiting for GPS...';
+        statusEl.className = 'status waiting';
+      } else if (wsConnected) {
+        statusEl.textContent = 'GPS Active - Connected to Laptop';
+        statusEl.className = 'status ok';
+      } else {
+        statusEl.textContent = 'GPS Active - Standalone (not connected to laptop)';
+        statusEl.className = 'status offline';
+      }
+    }
+
+    // ---- GPS ----
+    if ('geolocation' in navigator) {
+      navigator.geolocation.watchPosition(
+        (pos) => {
+          currentPos = {
+            lat: pos.coords.latitude,
+            lon: pos.coords.longitude,
+            accuracy: pos.coords.accuracy,
+            altitude: pos.coords.altitude,
+            speed: pos.coords.speed,
+            heading: pos.coords.heading
+          };
+
+          document.getElementById('coords').textContent =
+            `${currentPos.lat.toFixed(6)}, ${currentPos.lon.toFixed(6)}`;
+
+          let detail = '';
+          if (currentPos.altitude) detail += `Elev: ${(currentPos.altitude * 3.28084).toFixed(0)} ft | `;
+          if (currentPos.accuracy) detail += `Acc: ${(currentPos.accuracy * 3.28084).toFixed(0)} ft`;
+          if (currentPos.speed && currentPos.speed > 0) detail += ` | ${(currentPos.speed * 2.237).toFixed(1)} mph`;
+          document.getElementById('detail').textContent = detail;
+
+          updateStatusDisplay();
+
+          // Stream GPS to laptop if connected
+          if (ws && ws.readyState === 1) {
+            ws.send(JSON.stringify({ type: 'gps', ...currentPos }));
+          }
+        },
+        (err) => {
+          document.getElementById('status').textContent = `GPS Error: ${err.message}`;
+          document.getElementById('status').className = 'status error';
+        },
+        { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 }
+      );
+    }
+
+    // ---- Category ----
+    function selectCat(el) {
+      document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('selected'));
+      el.classList.add('selected');
+      selectedCategory = el.dataset.cat;
+      document.getElementById('sample-fields').style.display =
+        selectedCategory === 'sample' ? 'block' : 'none';
+    }
+
+    // ---- Mark Form ----
+    function openMarkForm() {
+      if (!currentPos) { alert('Waiting for GPS fix...'); return; }
+
+      capturedPos = { ...currentPos };
+      waypointCount++;
+
+      document.getElementById('captured-pos').textContent =
+        `${capturedPos.lat.toFixed(6)}, ${capturedPos.lon.toFixed(6)}` +
+        (capturedPos.altitude ? ` | ${(capturedPos.altitude * 3.28084).toFixed(0)} ft` : '') +
+        (capturedPos.accuracy ? ` | Acc: ${(capturedPos.accuracy * 3.28084).toFixed(0)} ft` : '');
+
+      document.getElementById('wp-title').value = `WP-${waypointCount}`;
+      document.getElementById('wp-notes').value = '';
+      pendingPhotos = [];
+      renderPhotoStrip();
+
+      if (selectedCategory === 'sample') {
+        sampleCount++;
+        document.getElementById('sample-id').value = `S-${String(sampleCount).padStart(3, '0')}`;
+      }
+
+      document.getElementById('mark-overlay').classList.add('visible');
+      setTimeout(() => document.getElementById('wp-title').focus(), 100);
+    }
+
+    function closeMarkForm() {
+      document.getElementById('mark-overlay').classList.remove('visible');
+      pendingPhotos = [];
+    }
+
+    // ---- Photos ----
+    function takePhoto() {
+      document.getElementById('photo-input').click();
+    }
+
+    document.getElementById('photo-input').addEventListener('change', (e) => {
+      const files = e.target.files;
+      if (!files.length) return;
+      for (const file of files) processPhoto(file);
+      e.target.value = '';
+    });
+
+    function processPhoto(file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const MAX = 1600;
+          let w = img.width, h = img.height;
+          if (w > MAX || h > MAX) {
+            if (w > h) { h = h * MAX / w; w = MAX; }
+            else { w = w * MAX / h; h = MAX; }
+          }
+          canvas.width = w;
+          canvas.height = h;
+          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+          pendingPhotos.push(canvas.toDataURL('image/jpeg', 0.8));
+          renderPhotoStrip();
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function renderPhotoStrip() {
+      const strip = document.getElementById('photo-strip');
+      strip.innerHTML = '';
+      pendingPhotos.forEach((dataUrl, i) => {
+        const div = document.createElement('div');
+        div.className = 'photo-thumb';
+        div.innerHTML = `
+          <img src="${dataUrl}">
+          <button class="remove-photo" onclick="removePhoto(${i})">X</button>
+        `;
+        strip.appendChild(div);
+      });
+    }
+
+    window.removePhoto = function(i) {
+      pendingPhotos.splice(i, 1);
+      renderPhotoStrip();
+    };
+
+    // ---- Save Waypoint (locally) ----
+    async function saveWaypoint() {
+      if (!capturedPos) return;
+
+      const title = document.getElementById('wp-title').value.trim() || `WP-${waypointCount}`;
+      const notes = document.getElementById('wp-notes').value.trim();
+      const wpId = Date.now();
+
+      const wp = {
+        id: wpId,
+        lat: capturedPos.lat,
+        lon: capturedPos.lon,
+        altitude: capturedPos.altitude,
+        accuracy: capturedPos.accuracy,
+        speed: capturedPos.speed,
+        heading: capturedPos.heading,
+        name: title,
+        category: selectedCategory,
+        notes: notes,
+        timestamp: new Date().toISOString(),
+        photoCount: pendingPhotos.length,
+        synced: false,
+        // Device metadata
+        device: {
+          userAgent: navigator.userAgent,
+          platform: navigator.platform,
+          screenOrientation: screen.orientation ? screen.orientation.type : null
+        }
+      };
+
+      if (selectedCategory === 'sample') {
+        wp.samples = [{
+          id: document.getElementById('sample-id').value,
+          type: document.getElementById('sample-type').value,
+          rockType: document.getElementById('rock-type').value,
+          mineralization: document.getElementById('mineralization').value,
+          alteration: document.getElementById('alteration').value,
+          description: notes
+        }];
+      }
+
+      // Save photos to IndexedDB (handles large data)
+      if (pendingPhotos.length > 0) {
+        await savePhotoDB(wpId, pendingPhotos);
+      }
+
+      // Save waypoint metadata to localStorage
+      phoneWaypoints.push(wp);
+      localStorage.setItem('fm-phone-waypoints', JSON.stringify(phoneWaypoints));
+      localStorage.setItem('fm-wp-count', String(waypointCount));
+      if (selectedCategory === 'sample') {
+        localStorage.setItem('fm-sample-count', String(sampleCount));
+      }
+
+      if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+
+      const toast = document.getElementById('saving-toast');
+      toast.textContent = `Saved: ${title}`;
+      toast.classList.add('visible');
+      setTimeout(() => toast.classList.remove('visible'), 1500);
+
+      closeMarkForm();
+      renderRecentList();
+      updateUnsyncedCount();
+    }
+
+    // ---- Recent List ----
+    function renderRecentList() {
+      const list = document.getElementById('recent-list');
+      list.innerHTML = '';
+      document.getElementById('total-count').textContent = phoneWaypoints.length;
+
+      const recent = phoneWaypoints.slice(-30).reverse();
+      recent.forEach(wp => {
+        const div = document.createElement('div');
+        div.className = 'recent-item';
+
+        const syncBadge = wp.synced
+          ? '<span style="color:#4caf50;font-size:10px"> [synced]</span>'
+          : '<span style="color:#ff9800;font-size:10px"> [not synced]</span>';
+
+        const photoInfo = wp.photoCount > 0
+          ? `<span style="color:#90caf9"> | ${wp.photoCount} photo${wp.photoCount > 1 ? 's' : ''}</span>`
+          : '';
+
+        div.innerHTML = `
+          <div class="name">${wp.name} <span style="color:#666">[${wp.category}]</span>${syncBadge}</div>
+          <div class="info">${wp.lat.toFixed(6)}, ${wp.lon.toFixed(6)} | ${new Date(wp.timestamp).toLocaleTimeString()}${photoInfo}</div>
+          ${wp.notes ? `<div class="info">${wp.notes.substring(0, 120)}${wp.notes.length > 120 ? '...' : ''}</div>` : ''}
+        `;
+        list.appendChild(div);
+      });
+    }
+
+    function updateUnsyncedCount() {
+      const unsynced = phoneWaypoints.filter(w => !w.synced).length;
+      document.getElementById('unsynced-count').textContent =
+        unsynced === 0 ? 'All synced' : `${unsynced} unsynced`;
+    }
+
+    // ---- Sync to Laptop ----
+    async function syncToLaptop() {
+      const btn = document.getElementById('sync-btn');
+      const statusEl = document.getElementById('sync-status');
+      const progressEl = document.getElementById('sync-progress');
+      const barEl = document.getElementById('sync-bar');
+
+      const unsynced = phoneWaypoints.filter(w => !w.synced);
+      if (unsynced.length === 0) {
+        statusEl.textContent = 'Everything is already synced!';
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Syncing...';
+      progressEl.style.display = 'block';
+      statusEl.textContent = `Syncing ${unsynced.length} waypoints...`;
+
+      let synced = 0;
+      let failed = 0;
+
+      for (const wp of unsynced) {
+        try {
+          // Get photos from IndexedDB
+          let photoData = [];
+          if (wp.photoCount > 0) {
+            photoData = await getPhotoDB(wp.id);
+          }
+
+          // Send to laptop server
+          const payload = {
+            ...wp,
+            photoData: photoData
+          };
+
+          const resp = await fetch('/api/waypoint', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+
+          if (resp.ok) {
+            const result = await resp.json();
+            // Mark as synced
+            const idx = phoneWaypoints.findIndex(w => w.id === wp.id);
+            if (idx >= 0) {
+              phoneWaypoints[idx].synced = true;
+              phoneWaypoints[idx].photos = result.photos;
+            }
+            synced++;
+          } else {
+            failed++;
+          }
+        } catch (e) {
+          failed++;
+          statusEl.textContent = `Connection failed. Make sure laptop server is running and you're on the same network.`;
+          break;
+        }
+
+        const pct = ((synced + failed) / unsynced.length * 100).toFixed(0);
+        barEl.style.width = pct + '%';
+        statusEl.textContent = `Syncing: ${synced + failed}/${unsynced.length}...`;
+      }
+
+      // Save updated sync status
+      localStorage.setItem('fm-phone-waypoints', JSON.stringify(phoneWaypoints));
+
+      barEl.style.width = '100%';
+      if (failed === 0) {
+        statusEl.textContent = `Done! ${synced} waypoints synced to laptop.`;
+      } else {
+        statusEl.textContent = `${synced} synced, ${failed} failed. Try again for remaining.`;
+      }
+
+      btn.disabled = false;
+      btn.textContent = 'Sync to Laptop';
+      renderRecentList();
+      updateUnsyncedCount();
+    }
+
+    // ---- Export ----
+    function exportPhoneData() {
+      const data = {
+        waypoints: phoneWaypoints,
+        exportDate: new Date().toISOString(),
+        device: 'phone'
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `field-data-${new Date().toISOString().split('T')[0]}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    // ---- Service Worker for offline ----
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    }
+
+    // ---- Wake Lock: prevent phone from sleeping while GPS tracking ----
+    let wakeLock = null;
+
+    async function requestWakeLock() {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLock = await navigator.wakeLock.request('screen');
+          wakeLock.addEventListener('release', () => { wakeLock = null; });
+        }
+      } catch (e) {
+        // Wake lock denied or not supported — GPS still works, screen may dim
+      }
+    }
+
+    // Re-acquire wake lock when page becomes visible again
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && !wakeLock) {
+        requestWakeLock();
+      }
+    });
+
+    requestWakeLock();
+
+    // ---- PWA Install Prompt ----
+    let deferredInstallPrompt = null;
+
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredInstallPrompt = e;
+      showInstallBanner();
+    });
+
+    function showInstallBanner() {
+      // Don't show if already installed as PWA
+      if (window.matchMedia('(display-mode: standalone)').matches) return;
+      if (navigator.standalone === true) return;
+
+      const banner = document.createElement('div');
+      banner.id = 'install-banner';
+      banner.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#1976d2;color:#fff;padding:12px 16px;z-index:9999;display:flex;align-items:center;justify-content:space-between;font-size:14px;box-shadow:0 -2px 10px rgba(0,0,0,0.3)';
+      banner.innerHTML = `
+        <div>
+          <b>Install Field Mapper</b><br>
+          <span style="font-size:12px;opacity:0.9">Works offline as a standalone app</span>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button onclick="installPWA()" style="padding:8px 16px;background:#fff;color:#1976d2;border:none;border-radius:6px;font-weight:bold;cursor:pointer;font-size:14px">Install</button>
+          <button onclick="this.parentElement.parentElement.remove()" style="padding:8px 12px;background:transparent;color:#fff;border:1px solid rgba(255,255,255,0.5);border-radius:6px;cursor:pointer;font-size:13px">Later</button>
+        </div>
+      `;
+      document.body.appendChild(banner);
+    }
+
+    window.installPWA = async function() {
+      const banner = document.getElementById('install-banner');
+      if (banner) banner.remove();
+
+      if (deferredInstallPrompt) {
+        deferredInstallPrompt.prompt();
+        const result = await deferredInstallPrompt.userChoice;
+        deferredInstallPrompt = null;
+      }
+    };
+
+    // ---- Keepalive: prevent browser from killing the page ----
+    // Periodic self-ping keeps the page alive in background
+    setInterval(() => {
+      if (document.hidden) {
+        // Tiny operation to keep JS alive
+        localStorage.setItem('fm-keepalive', Date.now().toString());
+      }
+    }, 25000);
+
+    // ---- Init ----
+    openDB().then(() => {
+      renderRecentList();
+      updateUnsyncedCount();
+    });
+  </script>
+</body>
+</html>

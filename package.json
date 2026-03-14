@@ -1,0 +1,14 @@
+{
+  "name": "field-mapper",
+  "version": "1.0.0",
+  "description": "Offline field mapping with phone GPS for mining",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "download": "node download-tiles.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "ws": "^8.16.0"
+  }
+}
