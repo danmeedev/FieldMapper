@@ -43,6 +43,7 @@ function openWpDB() {
 async function saveWaypoint(wp) {
   await openWpDB();
   wp.synced = wp.synced || false;
+  if (!wp.updatedAt) wp.updatedAt = Date.now();
   return new Promise((resolve, reject) => {
     const tx = wpDB.transaction('waypoints', 'readwrite');
     tx.objectStore('waypoints').put(wp);
