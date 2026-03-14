@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Field Mapper</title>
+  <link rel="stylesheet" href="/lib/leaflet.css" />
+  <link rel="stylesheet" href="/css/style.css?v=2" />
+</head>
+<body>
+  <div id="map"></div>
+
+  <div id="controls">
+    <div id="gps-status" class="status disconnected">GPS: Disconnected</div>
+    <div id="coords"></div>
+    <div id="accuracy"></div>
+  </div>
+
+  <div id="layer-panel">
+    <h3>Layers</h3>
+    <h4>Topo / Street</h4>
+    <label><input type="radio" name="base" value="topo" checked> USGS Topo</label>
+    <label><input type="radio" name="base" value="esri-topo"> ESRI World Topo (z19)</label>
+    <label><input type="radio" name="base" value="esri-street"> ESRI Street Map (z19)</label>
+    <label><input type="radio" name="base" value="natgeo"> National Geographic</label>
+    <h4>Satellite / Imagery</h4>
+    <label><input type="radio" name="base" value="satellite"> USGS Satellite</label>
+    <label><input type="radio" name="base" value="satellite-hd"> ESRI HD Satellite (z20)</label>
+    <label><input type="radio" name="base" value="imagery-topo"> USGS Imagery + Topo</label>
+    <h4>Terrain</h4>
+    <label><input type="radio" name="base" value="relief"> Shaded Relief</label>
+    <label><input type="radio" name="base" value="terrain"> Terrain Base</label>
+    <label><input type="radio" name="base" value="blm"> BLM Surface Mgmt</label>
+    <hr>
+    <label><input type="checkbox" id="overlay-claims" checked> Mining Claims</label>
+    <label><input type="checkbox" id="overlay-plss"> PLSS Sections</label>
+    <hr>
+    <h4>Overlays</h4>
+    <label><input type="checkbox" id="overlay-streets"> Streets &amp; Roads</label>
+    <label><input type="checkbox" id="overlay-labels"> Place Names</label>
+    <label><input type="checkbox" id="overlay-contours"> Topo Contours</label>
+    <label><input type="checkbox" id="overlay-hydro"> Hydro (water)</label>
+    <!-- Layer Legends -->
+    <div id="legend-contours" class="layer-legend" style="display:none">
+      <div class="legend-title">Contour Lines</div>
+      <div class="legend-entry"><span class="legend-line" style="background:#8B4513"></span> Index (100ft)</div>
+      <div class="legend-entry"><span class="legend-line" style="background:#8B4513;height:1px"></span> Intermediate (20ft)</div>
+    </div>
+    <div id="legend-hydro" class="layer-legend" style="display:none">
+      <div class="legend-title">Hydrology</div>
+      <div class="legend-entry"><span class="legend-line" style="background:#2196f3"></span> Perennial Stream</div>
+      <div class="legend-entry"><span class="legend-line" style="background:#2196f3;border-style:dashed"></span> Intermittent</div>
+      <div class="legend-entry"><span class="legend-swatch" style="background:rgba(33,150,243,0.3)"></span> Water Body</div>
+    </div>
+    <div id="legend-claims" class="layer-legend" style="display:none">
+      <div class="legend-title">Mining Claims</div>
+      <div class="legend-entry"><span class="legend-swatch" style="background:rgba(255,102,0,0.3);border:1px solid #ff6600"></span> Active Claim</div>
+    </div>
+    <div id="legend-plss" class="layer-legend" style="display:none">
+      <div class="legend-title">PLSS Sections</div>
+      <div class="legend-entry"><span class="legend-line" style="background:#888;border-style:dashed"></span> Section Line</div>
+    </div>
+    <hr>
+    <label><input type="checkbox" id="show-track" checked> Show Track</label>
+    <button id="clear-track">Clear Track</button>
+    <hr>
+    <button id="center-gps">Center on GPS</button>
+    <label><input type="checkbox" id="auto-center" checked> Auto-center</label>
+    <hr>
+    <h4>Cached Tiles</h4>
+    <div id="cache-stats" style="font-size:11px;color:#aaa;line-height:1.5">Loading...</div>
+  </div>
+
+  <!-- Waypoints list panel -->
+  <div id="wp-panel" class="side-panel">
+    <h3>Waypoints (<span id="wp-count">0</span>)</h3>
+    <div style="display:flex;gap:4px;margin-bottom:8px">
+      <button id="drop-pin" class="panel-btn" style="font-size:12px;padding:6px">Drop Pin Here</button>
+      <button id="export-waypoints" class="panel-btn" style="font-size:12px;padding:6px;background:#455a64">Export GPX</button>
+    </div>
+    <div id="waypoint-list" class="wp-list"></div>
+    <hr style="border:none;border-top:1px solid rgba(255,255,255,0.2);margin:10px 0">
+    <h4 style="font-size:13px;margin-bottom:6px">Legend</h4>
+    <div id="pin-legend" style="font-size:12px;line-height:2"></div>
+  </div>
+
+  <!-- Toolbar buttons -->
+  <div id="toolbar">
+    <button id="toggle-panel" class="toolbar-btn">Layers</button>
+    <button id="toggle-wp" class="toolbar-btn">Pins</button>
+    <button id="toggle-routes" class="toolbar-btn">Routes</button>
+    <button id="toggle-measure" class="toolbar-btn">Measure</button>
+    <button id="toggle-sync" class="toolbar-btn">Sync</button>
+    <button id="toggle-ai" class="toolbar-btn">AI</button>
+    <button id="toggle-settings" class="toolbar-btn">Settings</button>
+  </div>
+
+  <!-- Sync panel -->
+  <div id="sync-panel" class="side-panel">
+    <h3>Sync from Phone</h3>
+    <p class="panel-help">Phone syncs to this laptop automatically when you tap "Sync to Laptop" on the phone page. Waypoints appear here in real-time.</p>
+    <button id="sync-reload" class="panel-btn sync" onclick="location.reload()">Reload Waypoints</button>
+    <div id="sync-status" class="panel-status"></div>
+  </div>
+
+  <!-- AI Analysis panel -->
+  <div id="ai-panel" class="side-panel">
+    <h3>AI Field Assistant</h3>
+    <p class="panel-help">Analyzes your field data, photos, and observations. References known geology for your area.</p>
+    <button id="ai-analyze-all" class="panel-btn ai">Analyze All Observations</button>
+    <p class="panel-help" style="margin-top:8px">Or click a waypoint on the map and use "AI Analyze" in its popup for a focused analysis.</p>
+    <div id="ai-status" class="panel-status"></div>
+    <div id="ai-result" class="ai-result"></div>
+  </div>
+
+  <!-- Settings panel -->
+  <div id="settings-panel" class="side-panel">
+    <h3>Settings</h3>
+    <div class="form-row">
+      <label>Anthropic API Key</label>
+      <input type="password" id="api-key-input" placeholder="sk-ant-...">
+    </div>
+    <button id="save-settings" class="panel-btn">Save Settings</button>
+    <div id="settings-status" class="panel-status"></div>
+    <p class="panel-help" style="margin-top:8px">Get an API key from console.anthropic.com. Required for AI analysis. The key is stored locally on your laptop only.</p>
+  </div>
+
+  <!-- Routes panel -->
+  <div id="routes-panel" class="side-panel">
+    <h3>Routes</h3>
+    <div style="display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap">
+      <button id="new-route-pc" class="panel-btn" style="font-size:12px;padding:6px;background:#4caf50;flex:1">New Route</button>
+      <button id="refresh-routes" class="panel-btn" style="font-size:12px;padding:6px;background:#455a64;flex:1">Refresh</button>
+      <button id="print-route-btn" class="panel-btn" style="font-size:12px;padding:6px;background:#7b1fa2;flex:1">Print Map</button>
+    </div>
+    <div id="route-list" class="wp-list"></div>
+  </div>
+
+  <!-- Route Builder overlay (PC) -->
+  <div id="route-builder-pc" style="display:none;position:absolute;bottom:30px;left:50%;transform:translateX(-50%);z-index:2000;background:rgba(0,0,0,0.9);color:#fff;padding:12px 16px;border-radius:10px;min-width:340px;max-width:500px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <b id="rb-title">New Route</b>
+      <span id="rb-point-count" style="font-size:12px;color:#aaa">0 points</span>
+    </div>
+    <input id="rb-name" type="text" placeholder="Route name" style="width:100%;padding:6px;margin-bottom:6px;border:1px solid #444;border-radius:4px;background:#222;color:#fff;font-size:13px">
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:6px;cursor:pointer">
+      <input type="checkbox" id="rb-snap-roads" checked> Snap to roads (trace along roads between points)
+    </label>
+    <p style="font-size:11px;color:#aaa;margin-bottom:6px">Click map to add points. Click a point in the list to edit. Road bends are automatic.</p>
+    <div id="rb-points-list" style="max-height:150px;overflow-y:auto;margin-bottom:8px;font-size:12px"></div>
+    <div style="display:flex;gap:6px">
+      <button id="rb-save" style="flex:1;padding:8px;background:#4caf50;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:bold">Save Route</button>
+      <button id="rb-cancel" style="flex:1;padding:8px;background:#666;color:#fff;border:none;border-radius:4px;cursor:pointer">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Point editor popup (PC) -->
+  <div id="point-editor-pc" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:3000;background:rgba(0,0,0,0.95);color:#fff;padding:16px;border-radius:10px;width:300px">
+    <h4 style="margin:0 0 8px 0;font-size:14px">Edit Route Point</h4>
+    <input id="pe-label" type="text" placeholder="Point label" style="width:100%;padding:6px;margin-bottom:6px;border:1px solid #444;border-radius:4px;background:#222;color:#fff;font-size:13px">
+    <select id="pe-access" style="width:100%;padding:6px;margin-bottom:6px;border:1px solid #444;border-radius:4px;background:#222;color:#fff;font-size:13px">
+      <option value="any">Any Vehicle</option>
+      <option value="utv">UTV/ATV</option>
+      <option value="foot">Foot Only</option>
+      <option value="rope">Rope/Climb</option>
+      <option value="scramble">Scramble</option>
+    </select>
+    <input id="pe-hazards" type="text" placeholder="Hazards" style="width:100%;padding:6px;margin-bottom:6px;border:1px solid #444;border-radius:4px;background:#222;color:#fff;font-size:13px">
+    <input id="pe-landmarks" type="text" placeholder="Landmarks to look for" style="width:100%;padding:6px;margin-bottom:6px;border:1px solid #444;border-radius:4px;background:#222;color:#fff;font-size:13px">
+    <textarea id="pe-notes" placeholder="Notes" rows="2" style="width:100%;padding:6px;margin-bottom:8px;border:1px solid #444;border-radius:4px;background:#222;color:#fff;font-size:13px;resize:vertical"></textarea>
+    <div style="display:flex;gap:6px">
+      <button id="pe-save" style="flex:1;padding:8px;background:#4caf50;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:bold">Save</button>
+      <button id="pe-delete" style="padding:8px;background:#d32f2f;color:#fff;border:none;border-radius:4px;cursor:pointer">Delete Point</button>
+      <button id="pe-cancel" style="flex:1;padding:8px;background:#666;color:#fff;border:none;border-radius:4px;cursor:pointer">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Measure panel -->
+  <div id="measure-panel" class="side-panel" style="width:240px">
+    <h3>Measure Tool</h3>
+    <p class="panel-help">Click points on the map to measure distance. Double-click or press Escape to finish.</p>
+    <button id="start-measure" class="panel-btn" style="font-size:12px;padding:6px">Start Measuring</button>
+    <button id="clear-measure" class="panel-btn" style="font-size:12px;padding:6px;background:#455a64">Clear</button>
+    <div id="measure-result" style="margin-top:8px;font-size:13px;color:#fff"></div>
+  </div>
+
+  <!-- Print Route Map overlay -->
+  <div id="print-overlay" style="display:none;position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,0.85);overflow-y:auto">
+    <div id="print-container" style="max-width:900px;margin:20px auto;background:#fff;color:#000;padding:30px;border-radius:8px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:16px">
+        <button onclick="window.print()" style="padding:8px 16px;background:#2196f3;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:14px;font-weight:bold">Print</button>
+        <button onclick="document.getElementById('print-overlay').style.display='none'" style="padding:8px 16px;background:#666;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:14px">Close</button>
+      </div>
+      <div id="print-content"></div>
+    </div>
+  </div>
+
+  <!-- Coordinate search -->
+  <div id="coord-search">
+    <input type="text" id="coord-input" placeholder="Coordinates: 39.5, -118.5 or DMS or UTM...">
+    <button id="coord-go">Go</button>
+  </div>
+
+  <div id="measure-info"></div>
+
+  <script src="/lib/leaflet.js"></script>
+  <script src="/js/map.js?v=5"></script>
+</body>
+</html>

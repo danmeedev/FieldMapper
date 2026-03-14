@@ -1,0 +1,23 @@
+{
+  "name": "field-mapper-mobile",
+  "version": "1.0.0",
+  "description": "Offline GPS field mapping for mining and prospecting",
+  "scripts": {
+    "sync": "npx cap sync",
+    "open": "npx cap open android",
+    "build": "npx cap sync && npx cap open android"
+  },
+  "dependencies": {
+    "@capacitor-community/keep-awake": "^5",
+    "@capacitor/android": "^6",
+    "@capacitor/camera": "^6",
+    "@capacitor/core": "^6",
+    "@capacitor/geolocation": "^6",
+    "@capacitor/network": "^6",
+    "@capacitor/preferences": "^6"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6",
+    "typescript": "^5.9.3"
+  }
+}

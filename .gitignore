@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Cached map tiles (too large for git, re-downloadable)
+tiles/
+
+# Field data (user data, not code)
+data/
+field-data/
+
+# Generated SSL certs
+certs/
+
+# Server config (contains API keys)
+config.json
+
+# Mobile app build artifacts
+mobile-app/android/.gradle/
+mobile-app/android/.idea/
+mobile-app/android/app/build/
+mobile-app/android/build/
+mobile-app/android/capacitor-cordova-android-plugins/build/
+mobile-app/node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db

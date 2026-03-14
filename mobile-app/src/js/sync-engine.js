@@ -1,0 +1,176 @@
+// Sync engine - push waypoints + photos to laptop server, pull from laptop
+// Bidirectional sync with the same POST /api/waypoint endpoint
+
+async function syncToLaptop(onProgress) {
+  const serverUrl = await getSetting('laptopUrl');
+  if (!serverUrl) throw new Error('No laptop server URL configured. Go to Map > Settings to enter your laptop URL.');
+
+  // Test connection first
+  const connected = await checkLaptopConnection();
+  if (!connected) throw new Error('Cannot reach laptop server. Check URL and make sure you are on the same WiFi network.');
+
+  let pushed = 0;
+  let pulled = 0;
+  let errors = 0;
+
+  // --- PUSH: Send unsynced waypoints to laptop ---
+  const unsynced = await getUnsyncedWaypoints();
+  const totalWork = unsynced.length + 1; // +1 for pull phase
+
+  for (const wp of unsynced) {
+    try {
+      const photos = await getPhotos(wp.id);
+      const photoDataUrls = photos.map(p => p.dataUrl);
+
+      const payload = {
+        ...wp,
+        photoData: photoDataUrls
+      };
+
+      const resp = await fetch(`${serverUrl}/api/waypoint`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (resp.ok) {
+        await markSynced(wp.id);
+        pushed++;
+      } else {
+        console.error(`Sync push failed for ${wp.name}: ${resp.status}`);
+        errors++;
+      }
+    } catch (e) {
+      console.error(`Sync push error for ${wp.name}:`, e.message);
+      errors++;
+    }
+
+    if (onProgress) onProgress(pushed + errors, totalWork, pushed, errors);
+  }
+
+  // --- PULL: Get waypoints from laptop that we don't have ---
+  try {
+    const resp = await fetch(`${serverUrl}/api/waypoints`);
+    if (resp.ok) {
+      const serverWps = await resp.json();
+      const localWps = await getAllWaypoints();
+      const localIds = new Set(localWps.map(w => w.id));
+
+      for (const wp of serverWps) {
+        if (!localIds.has(wp.id)) {
+          wp.synced = true;
+          await saveWaypoint(wp);
+          pulled++;
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Pull from laptop failed:', e.message);
+  }
+
+  // --- PUSH ROUTES: Send local routes to laptop ---
+  let routesPushed = 0;
+  try {
+    const localRoutes = await getAllRoutes();
+    for (const route of localRoutes) {
+      try {
+        const resp = await fetch(`${serverUrl}/api/route`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(route)
+        });
+        if (resp.ok) routesPushed++;
+      } catch (e) {
+        console.error(`Route push error for ${route.name}:`, e.message);
+      }
+    }
+  } catch (e) {
+    console.error('Route push failed:', e.message);
+  }
+
+  // --- PULL ROUTES: Get routes from laptop that we don't have ---
+  let routesPulled = 0;
+  try {
+    const resp = await fetch(`${serverUrl}/api/routes`);
+    if (resp.ok) {
+      const serverRoutes = await resp.json();
+      const localRoutes = await getAllRoutes();
+      const localRouteIds = new Set(localRoutes.map(r => r.id));
+
+      for (const route of serverRoutes) {
+        if (!localRouteIds.has(route.id)) {
+          // Convert server photo filenames to URLs for offline use
+          if (route.points) {
+            route.points.forEach(pt => {
+              if (pt.photos) {
+                pt.photos = pt.photos.map(p =>
+                  p.startsWith('data:') || p.startsWith('http') ? p : `${serverUrl}/photos/${p}`
+                );
+              }
+            });
+          }
+          await saveRoute(route);
+          routesPulled++;
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Route pull failed:', e.message);
+  }
+
+  if (onProgress) onProgress(totalWork, totalWork, pushed, errors);
+
+  return { synced: pushed, pulled, errors, total: unsynced.length, routesPushed, routesPulled };
+}
+
+async function checkLaptopConnection() {
+  const serverUrl = await getSetting('laptopUrl');
+  if (!serverUrl) return false;
+
+  try {
+    const resp = await fetch(`${serverUrl}/api/cache-stats`, {
+      signal: AbortSignal.timeout(5000)
+    });
+    return resp.ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Pull waypoints from laptop (standalone)
+async function pullFromLaptop() {
+  const serverUrl = await getSetting('laptopUrl');
+  if (!serverUrl) throw new Error('No laptop server URL configured');
+
+  const resp = await fetch(`${serverUrl}/api/waypoints`);
+  if (!resp.ok) throw new Error('Failed to fetch waypoints from laptop');
+
+  const serverWps = await resp.json();
+  const localWps = await getAllWaypoints();
+  const localIds = new Set(localWps.map(w => w.id));
+
+  let imported = 0;
+  for (const wp of serverWps) {
+    if (!localIds.has(wp.id)) {
+      wp.synced = true;
+      await saveWaypoint(wp);
+      imported++;
+    }
+  }
+
+  return { imported };
+}
+
+// AI Analysis via laptop server
+async function runAIAnalysis(waypointId) {
+  const serverUrl = await getSetting('laptopUrl');
+  if (!serverUrl) throw new Error('Connect to laptop for AI analysis');
+
+  const resp = await fetch(`${serverUrl}/api/ai/analyze`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ waypointId })
+  });
+
+  return resp.json();
+}
