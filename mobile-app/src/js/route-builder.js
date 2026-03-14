@@ -89,6 +89,7 @@ function addRouteBuilderPoint(latlng, map, existingData) {
   const point = {
     lat: latlng.lat,
     lon: latlng.lng,
+    alt: existingData?.alt != null ? existingData.alt : null,
     label: existingData?.label || `Point ${idx + 1}`,
     notes: existingData?.notes || '',
     accessType: existingData?.accessType || 'any',
@@ -164,6 +165,15 @@ function updateRouteBuilderUI() {
     );
   }
   document.getElementById('rb-total-dist').textContent = formatRouteDistance(totalDist);
+
+  // Render elevation profile if any points have altitude data
+  const hasAlt = routeBuilderPoints.some(p => p.alt != null && !isNaN(p.alt));
+  if (hasAlt && routeBuilderPoints.length >= 2) {
+    renderElevationProfile(routeBuilderPoints, 'rb-elev-profile');
+  } else {
+    const epCanvas = document.getElementById('rb-elev-profile');
+    if (epCanvas) epCanvas.style.display = 'none';
+  }
 
   // Update point list
   const list = document.getElementById('rb-point-list');
@@ -364,7 +374,7 @@ window.saveRouteBuilder = async function() {
     name,
     description: document.getElementById('rb-route-desc').value.trim(),
     points: routeBuilderPoints.map(p => ({
-      lat: p.lat, lon: p.lon,
+      lat: p.lat, lon: p.lon, alt: p.alt,
       label: p.label, notes: p.notes, directions: p.directions || '',
       accessType: p.accessType, hazards: p.hazards,
       landmarks: p.landmarks, photos: p.photos
@@ -452,6 +462,142 @@ window.snapAllToTrack = function() {
   updateRouteBuilderLine(map);
   updateRouteBuilderUI();
 };
+
+/**
+ * Render an elevation profile as a filled area chart on a canvas element.
+ * @param {Array} points - Route points with lat, lon, alt properties
+ * @param {string} canvasId - ID of the canvas element to draw on
+ */
+function renderElevationProfile(points, canvasId) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+
+  // Filter to points that have altitude data
+  const withAlt = points.filter(p => p.alt != null && !isNaN(p.alt));
+  if (withAlt.length < 2) {
+    canvas.style.display = 'none';
+    return;
+  }
+
+  canvas.style.display = 'block';
+  const ctx = canvas.getContext('2d');
+
+  // Use devicePixelRatio for sharp rendering
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  const W = rect.width;
+  const H = rect.height;
+
+  // Calculate cumulative distances (in meters) for all points, keeping only
+  // those with altitude data. We walk the full points array to get real
+  // distances even if some intermediate points lack alt.
+  const data = []; // { dist, alt }
+  let cumDist = 0;
+  let prevIdx = null;
+  for (let i = 0; i < points.length; i++) {
+    if (i > 0) {
+      cumDist += haversineDistance(
+        points[i - 1].lat, points[i - 1].lon,
+        points[i].lat, points[i].lon
+      );
+    }
+    if (points[i].alt != null && !isNaN(points[i].alt)) {
+      data.push({ dist: cumDist, alt: points[i].alt });
+    }
+  }
+
+  const totalDist = data[data.length - 1].dist;
+  const alts = data.map(d => d.alt);
+  const minElev = Math.min(...alts);
+  const maxElev = Math.max(...alts);
+  const elevRange = maxElev - minElev || 1; // avoid division by zero
+
+  // Layout constants
+  const padLeft = 42;
+  const padRight = 8;
+  const padTop = 14;
+  const padBottom = 18;
+  const chartW = W - padLeft - padRight;
+  const chartH = H - padTop - padBottom;
+
+  // Map data point to canvas coordinates
+  function toX(dist) { return padLeft + (dist / (totalDist || 1)) * chartW; }
+  function toY(alt) { return padTop + chartH - ((alt - minElev) / elevRange) * chartH; }
+
+  // Dark background
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(0, 0, W, H);
+
+  // Grid lines (3 horizontal)
+  ctx.strokeStyle = '#333';
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 2; i++) {
+    const y = padTop + (chartH / 2) * i;
+    ctx.beginPath();
+    ctx.moveTo(padLeft, y);
+    ctx.lineTo(W - padRight, y);
+    ctx.stroke();
+  }
+
+  // Filled area under the elevation line
+  ctx.beginPath();
+  ctx.moveTo(toX(data[0].dist), toY(data[0].alt));
+  for (let i = 1; i < data.length; i++) {
+    ctx.lineTo(toX(data[i].dist), toY(data[i].alt));
+  }
+  // Close down to baseline
+  ctx.lineTo(toX(data[data.length - 1].dist), padTop + chartH);
+  ctx.lineTo(toX(data[0].dist), padTop + chartH);
+  ctx.closePath();
+
+  const grad = ctx.createLinearGradient(0, padTop, 0, padTop + chartH);
+  grad.addColorStop(0, 'rgba(76, 175, 80, 0.6)');
+  grad.addColorStop(1, 'rgba(76, 175, 80, 0.1)');
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Elevation line on top
+  ctx.beginPath();
+  ctx.moveTo(toX(data[0].dist), toY(data[0].alt));
+  for (let i = 1; i < data.length; i++) {
+    ctx.lineTo(toX(data[i].dist), toY(data[i].alt));
+  }
+  ctx.strokeStyle = '#4caf50';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Labels
+  ctx.font = '10px sans-serif';
+  ctx.textBaseline = 'middle';
+
+  // Min / Max elevation labels (in feet)
+  const maxFt = Math.round(maxElev * 3.28084);
+  const minFt = Math.round(minElev * 3.28084);
+  ctx.fillStyle = '#aaa';
+  ctx.textAlign = 'right';
+  ctx.fillText(`${maxFt}'`, padLeft - 3, padTop + 4);
+  ctx.fillText(`${minFt}'`, padLeft - 3, padTop + chartH - 2);
+
+  // Total distance label (bottom right)
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = '#888';
+  ctx.fillText(formatRouteDistance(totalDist), W - padRight, padTop + chartH + 3);
+
+  // "0" label (bottom left)
+  ctx.textAlign = 'left';
+  ctx.fillText('0', padLeft, padTop + chartH + 3);
+
+  // Title
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = '#666';
+  ctx.font = '9px sans-serif';
+  ctx.fillText('Elevation Profile', padLeft, 2);
+}
 
 function formatRouteDistance(meters) {
   const ft = meters * 3.28084;
