@@ -527,7 +527,9 @@ async function buildWpPopupContent(wp) {
 
 // Full-screen photo viewer
 window.showFullPhoto = function(wpId, index) {
-  getPhotos(parseInt(wpId)).then(photos => {
+  // wpId may be a number or numeric string (e.g. Date.now() timestamp)
+  const resolvedId = typeof wpId === 'string' && /^\d+$/.test(wpId) ? Number(wpId) : wpId;
+  getPhotos(resolvedId).then(photos => {
     if (!photos[index]) return;
 
     const overlay = document.createElement('div');
