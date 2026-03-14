@@ -95,6 +95,8 @@ Capacitor v6 Android app. Source in `mobile-app/src/`:
 | GET | `/api/export/route/:id` | Export route with photo URLs |
 | GET | `/api/backup` | Export all waypoints + routes |
 | POST | `/api/prefetch` | Background prefetch tiles for an area |
+| POST | `/api/track-session` | Save track session from mobile (skip if ID exists) |
+| GET | `/api/track-sessions` | Get all synced track sessions |
 | GET | `/api/cache-stats` | Tile cache statistics per layer |
 | GET | `/tiles/:layer/:z/:x/:y.*` | Tile proxy (cache-first, then fetch from source) |
 | GET | `/data/:file` | Serve GeoJSON overlay files |
@@ -123,6 +125,15 @@ Uses Claude API (`claude-sonnet-4-20250514`) for geological field analysis:
 - **Storage**: JSON files (server), localStorage + IndexedDB (browser/mobile)
 - **External APIs**: USGS, ESRI ArcGIS, BLM GIS, Open-Meteo, NOAA, Anthropic Claude
 - **SSL**: Auto-generated self-signed certs via openssl (required for phone GPS over HTTPS)
+
+## Environment Variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `FIELDMAPPER_PORT` | 3000 | HTTP server port |
+| `FIELDMAPPER_HTTPS_PORT` | 3443 | HTTPS server port |
+| `ANTHROPIC_API_KEY` | (none) | Claude API key (overrides config.json) |
+| `FIELDMAPPER_AUTH_TOKEN` | (none) | Optional Bearer token for /api/* auth |
 
 ## Development
 
