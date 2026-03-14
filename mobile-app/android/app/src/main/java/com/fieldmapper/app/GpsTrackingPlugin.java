@@ -107,8 +107,9 @@ public class GpsTrackingPlugin extends Plugin {
     public void load() {
         db = TrackingDatabase.getInstance(getContext());
 
-        // Bind to service if it's already running (e.g., after app restart)
-        if (GpsTrackingService.class.getName() != null) {
+        // Try to bind to the service if it's already running (e.g., after app restart)
+        long activeSession = db.getActiveSessionId();
+        if (activeSession > 0) {
             Intent bindIntent = new Intent(getContext(), GpsTrackingService.class);
             try {
                 getContext().bindService(bindIntent, serviceConnection, 0);
@@ -162,7 +163,8 @@ public class GpsTrackingPlugin extends Plugin {
 
     private void doStartTracking(PluginCall call) {
         String sessionName = call.getString("name", null);
-        long intervalMs = call.getInt("intervalMs", 3000);
+        int intervalInt = call.getInt("intervalMs", 3000);
+        long intervalMs = (long) intervalInt;
         float minDistanceM = call.getFloat("minDistanceM", 5.0f);
 
         Intent intent = new Intent(getContext(), GpsTrackingService.class);
@@ -188,27 +190,20 @@ public class GpsTrackingPlugin extends Plugin {
 
     private void resolveStartCall(PluginCall call) {
         JSObject result = new JSObject();
-        if (trackingService != null) {
+        if (serviceBound && trackingService != null) {
             result.put("sessionId", trackingService.getCurrentSessionId());
-            result.put("tracking", true);
+            result.put("tracking", trackingService.isTracking());
         } else {
-            result.put("sessionId", db.getActiveSessionId());
-            result.put("tracking", true);
+            long activeSession = db.getActiveSessionId();
+            result.put("sessionId", activeSession);
+            result.put("tracking", activeSession > 0);
         }
         call.resolve(result);
     }
 
     @PluginMethod()
     public void stopTracking(PluginCall call) {
-        Intent intent = new Intent(getContext(), GpsTrackingService.class);
-        intent.setAction(GpsTrackingService.ACTION_STOP);
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            getContext().startForegroundService(intent);
-        } else {
-            getContext().startService(intent);
-        }
-
+        // Unbind first so the service can stop cleanly
         if (serviceBound) {
             try {
                 getContext().unbindService(serviceConnection);
@@ -217,6 +212,16 @@ public class GpsTrackingPlugin extends Plugin {
             }
             serviceBound = false;
             trackingService = null;
+        }
+
+        // Send stop action — use startService, not startForegroundService,
+        // since the service is already running as foreground
+        Intent intent = new Intent(getContext(), GpsTrackingService.class);
+        intent.setAction(GpsTrackingService.ACTION_STOP);
+        try {
+            getContext().startService(intent);
+        } catch (Exception e) {
+            // Service might already be stopped
         }
 
         JSObject result = new JSObject();
