@@ -25,7 +25,7 @@ Windows: download the ZIP, extract the entire folder, then double-click **PC →
 ## Distribution and requirements
 
 ```text
-FieldMapper-1.1.0-Windows-Android/
+FieldMapper-1.1.1-Windows-Android/
   START HERE.html              Beginner guide, readable offline
   QUICK-SETUP.md / .html       Installation, hotspot, AI
   README.md / .html            Detailed reference
@@ -39,7 +39,7 @@ FieldMapper-1.1.0-Windows-Android/
     runtime/LICENSE
     app/                      Server/UI/production dependencies
   Android/
-    FieldMapper-1.1.0.apk     Signed release APK
+    FieldMapper-1.1.1.apk     Signed release APK
 ```
 
 The combined ZIP, standalone APK, and SHA-256 list are built under dist/. End users do not run npm, Gradle, Python, or Android Studio. Extract the whole ZIP first. Requirements: Windows 10/11 x64 (Intel/AMD), a browser, and Android API 24+ (Android 7+). No native iOS/macOS package is included. Internet is needed for acquisition and uncached online resources, not installed GPS/local records/prepared maps.
@@ -284,7 +284,7 @@ Laptop browser -> server CRUD -> authoritative laptop records
 Laptop server -> disk tile cache / optional weather, metadata, AI providers
 ```
 
-server.js wires Express/ws plus server/ modules. Desktop: public/index.html, public/js/map.js. Native mobile frontend: mobile-app/src/. public/gps.html/sw.js provide a legacy GPS PWA; chromebook-server.js is a minimal field collector. CLAUDE.md is the coding map; these guides are user-facing.
+server.js wires Express/ws plus server/ modules. Desktop: public/index.html, public/js/map.js. Native mobile frontend: mobile-app/src/. public/gps.html/sw.js provide a legacy GPS PWA; chromebook-server.js is a minimal field collector. Contributor notes are maintained separately on the [development branch](https://github.com/danmeedev/FieldMapper/tree/dev/improvements).
 
 | Group | Endpoints |
 | --- | --- |
@@ -315,7 +315,7 @@ JSON/base64 image uploads become photo files served at /photos/. WebSocket ?role
 | AI hidden | Enable/configure/test effective laptop settings and verify phone reachability. |
 | APK update rejected | Signing identity/versionCode, OS minimum, storage; preserve data before migration. |
 
-Packaged startup logs: `%LOCALAPPDATA%\Field Mapper\logs`. Developer review artifacts: ignored .review-logs/, with latest-session.json pointing to active logs. Logs may contain field coordinates/names; treat them as private project data. BUG-REVIEW.md/UPDATE-REVIEW.md/REVIEW-TESTING.md record implementation evidence and remaining field/hardware acceptance checks.
+Packaged startup logs: `%LOCALAPPDATA%\Field Mapper\logs`. Developer review artifacts: ignored .review-logs/, with latest-session.json pointing to active logs. Logs may contain field coordinates/names; treat them as private project data.
 
 Primary references: [Android hotspot setup](https://support.google.com/android/answer/9059108?hl=en), [Node release support](https://nodejs.org/en/about/previous-releases), [Capacitor migration](https://capacitorjs.com/docs/updating/8-0), [Anthropic model availability](https://platform.claude.com/docs/en/about-claude/model-deprecations). Recheck providers when changing integrations.
 
@@ -326,7 +326,7 @@ PC **Settings → App Updates** and Android **Map → menu → Settings → App 
 
 A newer stable version opens an update notice. **Close** postpones it. **Download update…** asks for explicit confirmation for that version before opening the ZIP or APK download. Neither checks nor a restart download or install a package. The app never applies updates automatically. PC users stop the app, extract the replacement package and launch it; Android users approve the downloaded APK in the system installer. Preserve the existing application ID, signing key and storage origin, and never uninstall to update. User data remains outside the PC package; see the backup and persistence instructions above.
 
-For release maintainers: edit `public/update-config.json` and `mobile-app/src/update-config.json` with the public `owner/repository`, branch and installed app version. They currently contain deliberate placeholders and produce **no GitHub requests**. Before each build, match both `currentVersion` values to package.json and the Android versionName. Publish the signed APK and Windows ZIP to GitHub Releases, then copy `update-manifest.example.json` to `update-manifest.json` on the configured branch, updating its stable three-part version and exact asset URLs. Publish assets before the manifest. Only HTTPS GitHub release downloads belonging to that repository are accepted. The selected branch is passed as `ref` to the [GitHub contents API](https://docs.github.com/en/rest/repos/contents#get-repository-content); no GitHub token is shipped. Private repositories are not supported. Keep release permissions restricted: the manifest and repository are the trust boundary. Android still checks the APK signature during installation.
+For release maintainers: edit `public/update-config.json` and `mobile-app/src/update-config.json` with the public `owner/repository`, branch and installed app version. The distributed app is configured for `danmeedev/FieldMapper` on `main`. Before each build, match both `currentVersion` values to package.json and the Android versionName. Publish the signed APK and Windows ZIP to GitHub Releases, then update `update-manifest.json` on the configured branch with the stable three-part version and exact asset URLs. Publish assets before the manifest. Only HTTPS GitHub release downloads belonging to that repository are accepted. The selected branch is passed as `ref` to the [GitHub contents API](https://docs.github.com/en/rest/repos/contents#get-repository-content); no GitHub token is shipped. Private repositories are not supported. Keep release permissions restricted: the manifest and repository are the trust boundary. Android still checks the APK signature during installation.
 
 
 ## Repository privacy and publishing
@@ -335,4 +335,7 @@ Personal `data/`, `field-data/`, photos within those folders, tiles, config/API 
 
 Run `npm run check:privacy` before pushing. It checks tracked paths and reachable history for private data paths and recognizable credential patterns without printing secret values. The packaging script runs this check, and GitHub Actions repeats it on pushes and pull requests. `.gitignore` cannot remove a file already committed; if a private file is ever committed, stop publishing, remove it from tracking, rotate exposed credentials, and review whether history cleanup is needed.
 
-Release maintainers: build with `npm run package:windows` using the existing private Android signing key. Never commit or upload the signing directory. The build verifies the APK identity and runs extracted-package privacy and persistence checks. Publish the ZIP, signed APK and SHA256SUMS as GitHub Release assets targeting the reviewed `main` commit. Also upload stable aliases `FieldMapper-Windows-Android.zip` and `FieldMapper-Android.apk` so the download links above always point at the latest release. Include quick setup and detailed guides as release assets. Keep update-checker repository/branch placeholders until a release source is explicitly configured; publishing a release does not enable automatic installation.
+Release maintainers: build with `npm run package:windows` using the existing private Android signing key. Never commit or upload the signing directory. The build verifies the APK identity and runs extracted-package privacy and persistence checks. Publish the ZIP, signed APK and SHA256SUMS as GitHub Release assets targeting the reviewed `main` commit. Also upload stable aliases `FieldMapper-Windows-Android.zip` and `FieldMapper-Android.apk` so the download links above always point at the latest release. Include quick setup and detailed guides as release assets. Update checks use the manifest on `main`; publishing a release never enables automatic installation.
+
+
+The original v1.1.0 download used placeholder update settings. Install v1.1.1 or newer manually once to enable live GitHub checks. From then on, **Settings → App Updates → Check now** fetches the published manifest and offers newer versions for your approval.

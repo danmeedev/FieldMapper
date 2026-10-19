@@ -1,0 +1,5 @@
+{
+  "version": "1.1.1",
+  "windows": "https://github.com/danmeedev/FieldMapper/releases/download/v1.1.1/FieldMapper-1.1.1-Windows-Android.zip",
+  "android": "https://github.com/danmeedev/FieldMapper/releases/download/v1.1.1/FieldMapper-1.1.1-Android.apk"
+}

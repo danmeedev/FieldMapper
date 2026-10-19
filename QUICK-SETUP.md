@@ -27,7 +27,7 @@ To stop, press **Ctrl+C** in that window or close it. Closing just the browser l
 
 ## 3. Install the Android app
 
-1. Find **Android → FieldMapper-1.1.0.apk** in the package, or use the separate `FieldMapper-1.1.0-Android.apk`. They are the same app.
+1. Find **Android → FieldMapper-1.1.1.apk** in the package, or use the separate `FieldMapper-1.1.1-Android.apk`. They are the same app.
 2. Transfer the APK to your phone using USB or your usual file-sharing service.
 3. Open the APK from the phone's Files/Downloads app.
 4. If asked, allow that Files app to install apps from this source, then install **Field Mapper**. You can turn off that source's install permission afterward. Use a trusted package and keep Google Play Protect enabled.
@@ -118,6 +118,6 @@ For detailed menus, storage, migration, developer builds, and logs, read [README
 
 ## Checking for app updates
 
-Open **Settings → App Updates** (on Android, open Map and its menu first). You can turn **Check automatically** off at any time, or press **Check now**. Checks need internet; they will not work in the field without an internet connection. The release source is still a placeholder, so checks will say it is not configured yet.
+Open **Settings → App Updates** (on Android, open Map and its menu first). You can turn **Check automatically** off at any time, or press **Check now**. Checks need internet; they will not work in the field without an internet connection. Version 1.1.1 and newer check the Field Mapper GitHub release feed. If you have the original 1.1.0 download, install the latest release manually once to enable these checks.
 
 When a new version is available, the app asks before opening its download. Choose **Close** to keep using your current version. Nothing installs automatically. On PC, close the running app, extract the new ZIP into a new folder, then use its Start Field Mapper file. On Android, download the new APK and approve installing it over the existing app. **Do not uninstall or clear storage.** Your saved data stays in place; keep a backup before upgrading.

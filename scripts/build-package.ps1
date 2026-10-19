@@ -3,6 +3,8 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $projectRoot
 try {
+  & npm.cmd run check:distribution
+  if ($LASTEXITCODE -ne 0) { throw 'Distribution document check failed.' }
   & npm.cmd run check:privacy
   if ($LASTEXITCODE -ne 0) { throw 'Repository privacy check failed. Do not publish this build.' }
   & npm.cmd test

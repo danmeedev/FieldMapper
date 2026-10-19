@@ -35,6 +35,7 @@ async function port() { const s=net.createServer(); await new Promise(r=>s.liste
     const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));
     await context.route('**/*',route=>{
       const url=route.request().url();
+      if(url.startsWith('https://api.github.com/repos/danmeedev/FieldMapper/contents/update-manifest.json'))return route.fulfill({json:require('../update-manifest.json')});
       if(url.includes('/tiles/'))return route.fulfill({contentType:'image/png',body:Buffer.from(png,'base64')});
       if(!url.startsWith('http://127.0.0.1:'))return route.abort();
       return route.continue();
@@ -73,7 +74,7 @@ async function port() { const s=net.createServer(); await new Promise(r=>s.liste
     for (const screen of [page,mobile]) {
       await screen.evaluate(()=>AppUpdates.open());
       await screen.locator('#updates-check').click();
-      await screen.waitForFunction(()=>document.querySelector('#updates-status').textContent.includes('not configured'));
+      await screen.waitForFunction(()=>document.querySelector('#updates-status').textContent.includes('up to date'));
       await screen.locator('#updates-enabled').uncheck();
       await screen.locator('#updates-close').click();
       await screen.reload();
@@ -82,7 +83,7 @@ async function port() { const s=net.createServer(); await new Promise(r=>s.liste
       assert.equal(await screen.locator('#updates-enabled').isChecked(),false);
       await screen.locator('#updates-close').click();
     }
-    console.log('PASS PC/Android update menu, placeholder handling and persistent opt-out');
+    console.log('PASS PC/Android update menu, release metadata and persistent opt-out');
 
     await page.screenshot({path:'.review-logs/desktop-smoke.png'});await mobile.screenshot({path:'.review-logs/mobile-smoke.png'});
     assert.deepEqual(errors,[]);console.log('PASS no uncaught desktop/mobile browser errors');
