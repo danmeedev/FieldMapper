@@ -16,7 +16,13 @@ const delay=ms=>new Promise(r=>setTimeout(r,ms));
     assert.equal(fs.existsSync(path.join(app,'node_modules','playwright')),false);
     assert.equal(fs.existsSync(path.join(app,'node_modules','marked')),false);
     const files=[];function walk(dir){for(const e of fs.readdirSync(dir,{withFileTypes:true})){const p=path.join(dir,e.name);if(e.isDirectory())walk(p);else files.push(p)}}walk(bundle);
-    assert.equal(files.some(f=>/\.(p12|jks|keystore|pem)$/i.test(f)),false);
+    assert.equal(files.some(f=>/\.(p12|jks|keystore|pem|pfx|key|db(?:-[\w]+)?|sqlite3?(?:-[\w]+)?)$/i.test(f)),false);
+    // Byte-for-byte comparison against local records/photos catches accidental inclusion under another name.
+    const privateHashes=new Set();
+    function collectPrivate(dir){if(!fs.existsSync(dir))return;for(const entry of fs.readdirSync(dir,{withFileTypes:true})){const file=path.join(dir,entry.name);if(entry.isDirectory())collectPrivate(file);else privateHashes.add(createHash('sha256').update(fs.readFileSync(file)).digest('hex'));}}
+    for(const dir of ['data','field-data','certs'])collectPrivate(dir);
+    if(fs.existsSync('config.json'))privateHashes.add(createHash('sha256').update(fs.readFileSync('config.json')).digest('hex'));
+    for(const file of files)assert.equal(privateHashes.has(createHash('sha256').update(fs.readFileSync(file)).digest('hex')),false,'Local private file must not ship: '+path.relative(bundle,file));
     for(const file of ['START HERE.html','README.html','QUICK-SETUP.html','PC/Start Field Mapper.cmd','PC/Open My Field Mapper Data.cmd'])assert.ok(fs.existsSync(path.join(bundle,file)),file);
     const apk=files.find(f=>/Android.*\.apk$/.test(f));const hash=f=>createHash('sha256').update(fs.readFileSync(f)).digest('hex');assert.equal(hash(apk),hash(build.apk));
     console.log('PASS extracted ZIP includes runtime, launchers, guides, production dependencies, signed APK; no private data or keys');

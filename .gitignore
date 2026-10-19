@@ -37,3 +37,32 @@ dist/
 *.jks
 *.p12
 keystore.properties
+
+# Personal databases, exports and backups (never publish)
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+backups/
+exports/
+*.bak
+*.backup
+*.dump
+*.tar
+*.tgz
+*.zip
+*.apk
+*.aab
+
+# Local credentials, signing material and machine settings
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.pfx
+signing/
+.claude/settings.local.json
+mobile-app/.idea/

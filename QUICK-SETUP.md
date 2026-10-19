@@ -1,5 +1,7 @@
 # Field Mapper — Quick Setup
 
+**Get the app:** [Windows download](https://github.com/danmeedev/FieldMapper/releases/latest/download/FieldMapper-Windows-Android.zip) · [Android APK](https://github.com/danmeedev/FieldMapper/releases/latest/download/FieldMapper-Android.apk). These are ready-to-use builds; you do not need the GitHub source-code ZIP.
+
 For Windows PCs and Android phones. The packaged apps do not require Node.js, programming tools, or Android Studio. For every menu and technical details, see [README](README.md).
 
 ## 1. What you need
