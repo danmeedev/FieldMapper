@@ -3,7 +3,7 @@
 // to the existing app GPS pipeline. Falls back to navigator.geolocation
 // when running in a browser (not Capacitor).
 
-const NativeGps = {
+const NativeGps = window.NativeGps = {
   isNative: false,
   isTracking: false,
   currentSessionId: null,

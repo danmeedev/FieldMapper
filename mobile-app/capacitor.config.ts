@@ -5,6 +5,9 @@ const config: CapacitorConfig = {
   appName: 'Field Mapper',
   webDir: 'src',
   server: {
+    // Persisted IndexedDB is tied to this origin; changes require a data migration.
+    hostname: 'localhost',
+    androidScheme: 'https',
     allowNavigation: [
       'basemap.nationalmap.gov',
       'services.arcgisonline.com',

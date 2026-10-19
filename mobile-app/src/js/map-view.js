@@ -403,6 +403,7 @@ function initMapView() {
       url = url.replace(/\/+$/, '');
 
       await saveSetting('laptopUrl', url);
+    await AiSettings.refresh();
       statusEl.textContent = 'Saved! Testing connection...';
       statusEl.style.color = '#ffc107';
 
@@ -933,56 +934,29 @@ window.backupAllData = async function() {
   document.body.appendChild(statusToast);
 
   try {
-    // Backup routes
-    const routes = await getAllRoutes();
-    let routesSynced = 0;
-    for (const route of routes) {
-      const resp = await fetch(`${serverUrl}/api/route`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(route)
-      });
-      if (resp.ok) routesSynced++;
-    }
-
-    // Also sync waypoints
+    // Full bidirectional sync (waypoints, routes, specimens, dig orders, tracks).
+    // syncToLaptop() reconciles everything with last-write-wins + delete tombstones,
+    // so we must NOT push/pull routes separately here — doing so would bypass the
+    // tombstone logic and could resurrect deleted routes.
     const result = await syncToLaptop((done, total) => {
-      statusToast.textContent = `Syncing waypoints... ${done}/${total}`;
+      statusToast.textContent = `Syncing... ${done}/${total}`;
     });
 
-    // Pull routes from server that we don't have locally
-    let routesPulled = 0;
-    try {
-      const resp = await fetch(`${serverUrl}/api/routes`);
-      if (resp.ok) {
-        const serverRoutes = await resp.json();
-        const localRoutes = await getAllRoutes();
-        const localRouteIds = new Set(localRoutes.map(r => r.id));
-        for (const route of serverRoutes) {
-          if (!localRouteIds.has(route.id)) {
-            if (route.points) {
-              route.points.forEach(pt => {
-                if (pt.photos) {
-                  pt.photos = pt.photos.map(p =>
-                    p.startsWith('data:') || p.startsWith('http') ? p : `${serverUrl}/photos/${p}`
-                  );
-                }
-              });
-            }
-            await saveRoute(route);
-            routesPulled++;
-          }
-        }
-      }
-    } catch (e) {
-      console.error('Route pull failed:', e.message);
-    }
-
-    statusToast.textContent = `Backup complete!\n${result.synced} wp pushed, ${routesSynced} routes pushed\n${result.pulled} wp pulled, ${routesPulled} routes pulled`;
+    const sent = result.pushedCreated + result.pushedUpdated;
+    const recv = result.pulledCreated + result.pulledUpdated;
+    const dels = result.pushedDeleted + result.pulledDeleted;
+    statusToast.textContent = `Sync complete!\nSent ${sent}, received ${recv}` +
+      (dels ? `\n${dels} deletion${dels > 1 ? 's' : ''} synced` : '') +
+      (result.errors ? `\n${result.errors} failed` : '');
     statusToast.style.background = 'rgba(27,94,32,0.95)';
     setTimeout(() => statusToast.remove(), 4000);
+
+    if (typeof loadMapWaypoints === 'function') { try { loadMapWaypoints(); } catch (e) {} }
+    if (typeof refreshCatalog === 'function' && typeof catalogInitialized !== 'undefined' && catalogInitialized) {
+      try { refreshCatalog(); } catch (e) {}
+    }
   } catch (e) {
-    statusToast.textContent = `Backup failed: ${e.message}`;
+    statusToast.textContent = `Sync failed: ${e.message}`;
     statusToast.style.background = 'rgba(183,28,28,0.95)';
     setTimeout(() => statusToast.remove(), 4000);
   }

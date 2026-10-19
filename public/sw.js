@@ -1,5 +1,5 @@
 // Service Worker for Field Mapper PWA - full offline support
-const CACHE_NAME = 'fieldmapper-v2';
+const CACHE_NAME = 'fieldmapper-v3';
 const PRECACHE_URLS = [
   '/gps.html',
   '/manifest.json',
@@ -25,6 +25,12 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
+
+  // Update metadata must never be satisfied from an old offline cache.
+  if (url.hostname === 'api.github.com' || url.pathname === '/update-config.json' || url.pathname === '/js/app-updates.js') {
+    e.respondWith(fetch(e.request));
+    return;
+  }
 
   // API calls: network only, fail gracefully when offline
   if (url.pathname.startsWith('/api/')) {

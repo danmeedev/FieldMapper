@@ -466,12 +466,14 @@ window.doSync = async function() {
     });
 
     let msg = '';
-    if (result.synced > 0) msg += `Pushed ${result.synced} wp. `;
-    if (result.pulled > 0) msg += `Pulled ${result.pulled} wp. `;
-    if (result.routesPushed > 0) msg += `${result.routesPushed} routes pushed. `;
-    if (result.routesPulled > 0) msg += `${result.routesPulled} routes pulled. `;
-    if (result.tracksPushed > 0) msg += `${result.tracksPushed} tracks pushed. `;
-    if (result.tracksPulled > 0) msg += `${result.tracksPulled} tracks pulled. `;
+    const sent = result.pushedCreated + result.pushedUpdated;
+    const recv = result.pulledCreated + result.pulledUpdated;
+    const delsApplied = result.pushedDeleted + result.pulledDeleted;
+    if (sent > 0) msg += `Sent ${sent} (${result.pushedCreated} new, ${result.pushedUpdated} updated). `;
+    if (recv > 0) msg += `Received ${recv} (${result.pulledCreated} new, ${result.pulledUpdated} updated). `;
+    if (delsApplied > 0) msg += `${delsApplied} deletion${delsApplied > 1 ? 's' : ''} synced. `;
+    if (result.tracksPushed > 0) msg += `${result.tracksPushed} tracks sent. `;
+    if (result.tracksPulled > 0) msg += `${result.tracksPulled} tracks received. `;
     if (result.errors > 0) msg += `${result.errors} failed. `;
     if (!msg) msg = 'Everything up to date!';
     statusEl.textContent = msg.trim();
@@ -491,6 +493,9 @@ window.doSync = async function() {
   btn.disabled = false;
   btn.textContent = 'Sync to Laptop';
   refreshGpsList();
+  if (typeof catalogInitialized !== 'undefined' && catalogInitialized && typeof refreshCatalog === 'function') {
+    try { refreshCatalog(); } catch (e) {}
+  }
 
   // Update server URL display
   const serverUrl = await getSetting('laptopUrl');
@@ -545,7 +550,7 @@ async function showWaypointDetail(id) {
     ${sampleHtml}
     <h3 style="font-size:15px;margin:10px 0 6px">Photos (${photos.length})</h3>
     ${photoHtml}
-    <div style="margin-top:14px">
+    <div data-ai-tool style="margin-top:14px">
       <button id="ai-analyze-btn" class="btn" style="width:100%;background:#1565c0" onclick="triggerAIAnalysis(${wp.id}, false)">AI Analysis</button>
       <div id="ai-result-container" style="display:none;margin-top:10px">
         <div id="ai-result-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -566,7 +571,8 @@ async function showWaypointDetail(id) {
   `;
   document.body.appendChild(overlay);
 
-  // Show cached AI result if available
+  // Confirm laptop readiness before revealing cached AI content.
+  AiSettings.refresh();
   getAIResult(wp.id).then(function(cached) {
     if (cached && cached.analysis) {
       var container = document.getElementById('ai-result-container');
@@ -590,6 +596,7 @@ async function showWaypointDetail(id) {
 
 // --- AI Analysis trigger ---
 window.triggerAIAnalysis = async function(waypointId, forceRefresh) {
+  try { await AiSettings.requireReady(); } catch (e) { await AiSettings.open(); return; }
   var btn = document.getElementById('ai-analyze-btn');
   var container = document.getElementById('ai-result-container');
   var resultText = document.getElementById('ai-result-text');
