@@ -150,11 +150,11 @@ async function deletePhoto(photoId) {
 // The route point's photos array stores only these IDs (strings like "rp_<routeId>_<ptIdx>_<ts>").
 async function saveRoutePhoto(photoId, dataUrl) {
   await openWpDB();
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const tx = wpDB.transaction('photos', 'readwrite');
     tx.objectStore('photos').put({ id: photoId, waypointId: '__route__', dataUrl });
     tx.oncomplete = () => resolve();
-    tx.onerror = () => resolve();
+    tx.onerror = () => reject(tx.error);
   });
 }
 
@@ -252,11 +252,11 @@ async function getSetting(key) {
 // --- Routes ---
 async function saveRoute(route) {
   await openWpDB();
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const tx = wpDB.transaction('routes', 'readwrite');
     tx.objectStore('routes').put(route);
     tx.oncomplete = () => resolve();
-    tx.onerror = () => resolve();
+    tx.onerror = () => reject(tx.error);
   });
 }
 async function getAllRoutes() {
@@ -268,8 +268,30 @@ async function getAllRoutes() {
     req.onerror = () => resolve([]);
   });
 }
+async function getRoute(id) {
+  await openWpDB();
+  return new Promise((resolve) => {
+    const tx = wpDB.transaction('routes', 'readonly');
+    const req = tx.objectStore('routes').get(id);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => resolve(null);
+  });
+}
 async function deleteRoute(id) {
   await openWpDB();
+  // Clean up photos from all route points (Phase 3C)
+  const route = await getRoute(id);
+  if (route && route.points) {
+    for (const pt of route.points) {
+      if (pt.photos && pt.photos.length > 0) {
+        for (const ref of pt.photos) {
+          if (!isInlinePhotoUrl(ref)) {
+            try { await deleteRoutePhoto(ref); } catch (e) {}
+          }
+        }
+      }
+    }
+  }
   return new Promise((resolve) => {
     const tx = wpDB.transaction('routes', 'readwrite');
     tx.objectStore('routes').delete(id);
@@ -310,11 +332,11 @@ async function deleteMeasurement(id) {
 // --- Track Sessions ---
 async function saveTrackSession(session) {
   await openWpDB();
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const tx = wpDB.transaction('trackSessions', 'readwrite');
     tx.objectStore('trackSessions').put(session);
     tx.oncomplete = () => resolve();
-    tx.onerror = () => resolve();
+    tx.onerror = () => reject(tx.error);
   });
 }
 async function getAllTrackSessions() {
@@ -347,6 +369,18 @@ async function saveAIResult(waypointId, result) {
   return new Promise(function(resolve) {
     var tx = wpDB.transaction('ai-cache', 'readwrite');
     tx.objectStore('ai-cache').put(entry, key);
+    tx.oncomplete = function() { resolve(); };
+    tx.onerror = function() { resolve(); };
+  });
+}
+
+// Invalidate cached AI analysis (Phase 5E — called when waypoint is edited or photos added)
+async function invalidateAICache(waypointId) {
+  await openWpDB();
+  var key = String(waypointId);
+  return new Promise(function(resolve) {
+    var tx = wpDB.transaction('ai-cache', 'readwrite');
+    tx.objectStore('ai-cache').delete(key);
     tx.oncomplete = function() { resolve(); };
     tx.onerror = function() { resolve(); };
   });

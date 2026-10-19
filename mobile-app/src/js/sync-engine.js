@@ -87,9 +87,6 @@ async function syncToLaptop(onProgress) {
     if (onProgress) onProgress(pushed + errors, totalWork, pushed, errors);
   }
 
-  // Save any failed IDs to retry queue for next sync
-  await saveSetting('sync-retry-queue', failedIds);
-
   // --- PULL: Get waypoints from laptop, with conflict resolution ---
   try {
     const resp = await fetch(`${serverUrl}/api/waypoints`);
@@ -138,16 +135,53 @@ async function syncToLaptop(onProgress) {
     console.error('Pull from laptop failed:', e.message);
   }
 
-  // --- PUSH ROUTES: Send local routes to laptop ---
+  // --- RE-QUERY: catch waypoints added during sync (Phase 4A) ---
+  const lateUnsynced = await getUnsyncedWaypoints();
+  for (const wp of lateUnsynced) {
+    // Skip any we already tried
+    if (unsynced.find(u => u.id === wp.id)) continue;
+    try {
+      const photos = await getPhotos(wp.id);
+      const photoDataUrls = photos.map(p => p.dataUrl);
+      const payload = { ...wp, updatedAt: wp.updatedAt || Date.now(), photoData: photoDataUrls };
+      const resp = await fetch(`${serverUrl}/api/waypoint`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (resp.ok) { await markSynced(wp.id); pushed++; }
+      else { failedIds.push(wp.id); errors++; }
+    } catch (e) { failedIds.push(wp.id); errors++; }
+  }
+
+  // Update retry queue with all failures
+  await saveSetting('sync-retry-queue', failedIds);
+
+  // --- PUSH ROUTES: Send local routes to laptop (with photo resolution, Phase 3C) ---
   let routesPushed = 0;
   try {
     const localRoutes = await getAllRoutes();
     for (const route of localRoutes) {
       try {
+        // Resolve photo references to data URLs for server (Phase 3C)
+        const routePayload = JSON.parse(JSON.stringify(route));
+        if (routePayload.points) {
+          for (const pt of routePayload.points) {
+            if (pt.photos && pt.photos.length > 0) {
+              const resolved = [];
+              for (const ref of pt.photos) {
+                const url = await resolveRoutePhoto(ref);
+                if (url) resolved.push(url);
+              }
+              pt.photos = resolved;
+            }
+          }
+        }
+        if (!routePayload.updatedAt) routePayload.updatedAt = Date.now();
         const resp = await fetch(`${serverUrl}/api/route`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(route)
+          body: JSON.stringify(routePayload)
         });
         if (resp.ok) routesPushed++;
       } catch (e) {
@@ -158,17 +192,21 @@ async function syncToLaptop(onProgress) {
     console.error('Route push failed:', e.message);
   }
 
-  // --- PULL ROUTES: Get routes from laptop that we don't have ---
+  // --- PULL ROUTES: Get routes from laptop — import new OR update if newer (Phase 4A) ---
   let routesPulled = 0;
   try {
     const resp = await fetch(`${serverUrl}/api/routes`);
     if (resp.ok) {
       const serverRoutes = await resp.json();
       const localRoutes = await getAllRoutes();
-      const localRouteIds = new Set(localRoutes.map(r => r.id));
+      const localRouteMap = new Map(localRoutes.map(r => [r.id, r]));
 
       for (const route of serverRoutes) {
-        if (!localRouteIds.has(route.id)) {
+        const local = localRouteMap.get(route.id);
+        const isNew = !local;
+        const isNewer = local && route.updatedAt && (!local.updatedAt || route.updatedAt > local.updatedAt);
+
+        if (isNew || isNewer) {
           // Convert server photo filenames to URLs for offline use
           if (route.points) {
             route.points.forEach(pt => {

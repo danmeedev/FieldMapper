@@ -166,6 +166,20 @@ function onGpsUpdate_navigation(pos) {
     }
   }
 
+  // Off-route warning (Phase 5D)
+  if (navRoute && navRoute.points) {
+    const offDist = getDistanceToRoute(pos.lat, pos.lon, navRoute.points);
+    const offRouteEl = document.getElementById('nav-off-route-warning');
+    if (offRouteEl) {
+      if (offDist > 50) {
+        offRouteEl.textContent = `Off route: ${Math.round(offDist)}m away`;
+        offRouteEl.style.display = 'block';
+      } else {
+        offRouteEl.style.display = 'none';
+      }
+    }
+  }
+
   // Arrival detection (within 15m)
   if (dist < 15) {
     if (navRoute && navRoute.currentIndex < navRoute.points.length - 1) {
@@ -195,4 +209,28 @@ function formatNavDistance(meters) {
   if (ft < 1000) return `${ft.toFixed(0)} ft`;
   const miles = meters * 0.000621371;
   return `${miles.toFixed(2)} mi`;
+}
+
+// --- Off-route detection (Phase 5D) ---
+function distanceToSegment(lat, lon, lat1, lon1, lat2, lon2) {
+  const dx = lon2 - lon1, dy = lat2 - lat1;
+  if (dx === 0 && dy === 0) return haversineDistance(lat, lon, lat1, lon1);
+  let t = ((lat - lat1) * dy + (lon - lon1) * dx) / (dy * dy + dx * dx);
+  t = Math.max(0, Math.min(1, t));
+  const projLat = lat1 + t * dy;
+  const projLon = lon1 + t * dx;
+  return haversineDistance(lat, lon, projLat, projLon);
+}
+
+function getDistanceToRoute(lat, lon, points) {
+  if (!points || points.length === 0) return Infinity;
+  if (points.length === 1) return haversineDistance(lat, lon, points[0].lat, points[0].lon);
+  let minDist = Infinity;
+  for (let i = 0; i < points.length - 1; i++) {
+    const d = distanceToSegment(lat, lon,
+      points[i].lat, points[i].lon,
+      points[i + 1].lat, points[i + 1].lon);
+    if (d < minDist) minDist = d;
+  }
+  return minDist;
 }

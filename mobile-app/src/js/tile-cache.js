@@ -185,9 +185,34 @@ L.TileLayer.Cached = L.TileLayer.extend({
           done(new Error('Tile not found'), tile);
         }
       } catch (e) {
-        done(e, tile);
+        // Offline placeholder: render gray tile with "Offline" text (Phase 2B)
+        const canvas = document.createElement('canvas');
+        canvas.width = 256; canvas.height = 256;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#2a2a2a';
+        ctx.fillRect(0, 0, 256, 256);
+        ctx.strokeStyle = '#3a3a3a';
+        ctx.strokeRect(0, 0, 256, 256);
+        ctx.fillStyle = '#555';
+        ctx.font = '12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('Offline', 128, 128);
+        tile.src = canvas.toDataURL();
+        done(null, tile);
       }
-    }).catch(() => done(new Error('DB error'), tile));
+    }).catch(() => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 256; canvas.height = 256;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#2a2a2a';
+      ctx.fillRect(0, 0, 256, 256);
+      ctx.fillStyle = '#555';
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Offline', 128, 128);
+      tile.src = canvas.toDataURL();
+      done(null, tile);
+    });
 
     return tile;
   }
@@ -322,6 +347,7 @@ async function downloadArea(sourceId, bounds, minZoom, maxZoom, onProgress) {
   }
 
   let done = 0;
+  let failed = 0;
   for (const t of tiles) {
     const key = `${sourceId}/${t.z}/${t.x}/${t.y}`;
     const cached = await getTileFromCache(key);
@@ -332,12 +358,15 @@ async function downloadArea(sourceId, bounds, minZoom, maxZoom, onProgress) {
         if (resp.ok) {
           const blob = await resp.blob();
           await putTileInCache(key, blob);
+        } else {
+          failed++;
         }
-      } catch (e) { /* skip failed tiles */ }
+      } catch (e) { failed++; }
     }
     done++;
-    if (onProgress) onProgress(done, tiles.length);
+    if (onProgress) onProgress(done, tiles.length, failed);
   }
+  return { done, failed, total: tiles.length };
 }
 
 /**
@@ -433,6 +462,7 @@ async function downloadRouteCorridor(sourceIds, routePoints, bufferMiles, minZoo
   // Download tiles for each source layer
   const totalTiles = tiles.length * sourceIds.length;
   let done = 0;
+  let failed = 0;
 
   for (const sourceId of sourceIds) {
     const source = TILE_SOURCES[sourceId];
@@ -440,8 +470,8 @@ async function downloadRouteCorridor(sourceIds, routePoints, bufferMiles, minZoo
 
     for (const t of tiles) {
       if (control && control.cancelled) {
-        if (onProgress) onProgress(done, totalTiles, 'cancelled');
-        return { done, total: totalTiles, cancelled: true };
+        if (onProgress) onProgress(done, totalTiles, 'cancelled', failed);
+        return { done, failed, total: totalTiles, cancelled: true };
       }
 
       if (t.z > source.maxZoom) { done++; continue; }
@@ -455,16 +485,18 @@ async function downloadRouteCorridor(sourceIds, routePoints, bufferMiles, minZoo
           if (resp.ok) {
             const blob = await resp.blob();
             await putTileInCache(key, blob);
+          } else {
+            failed++;
           }
-        } catch (e) { /* skip failed tiles */ }
+        } catch (e) { failed++; }
       }
       done++;
-      if (done % 10 === 0 && onProgress) onProgress(done, totalTiles, sourceId);
+      if (done % 10 === 0 && onProgress) onProgress(done, totalTiles, sourceId, failed);
     }
   }
 
-  if (onProgress) onProgress(done, totalTiles, 'complete');
-  return { done, total: totalTiles, cancelled: false };
+  if (onProgress) onProgress(done, totalTiles, 'complete', failed);
+  return { done, failed, total: totalTiles, cancelled: false };
 }
 
 /**
@@ -507,14 +539,29 @@ function estimateCorridorDownload(routePoints, bufferMiles, minZoom, maxZoom, so
   return { tileCount: totalTiles, estimatedMB: Math.round(estimatedMB * 10) / 10 };
 }
 
-// Cache stats
+// Storage quota check (Phase 2A)
+async function checkStorageQuota() {
+  if (navigator.storage && navigator.storage.estimate) {
+    try {
+      const est = await navigator.storage.estimate();
+      const usedMB = Math.round((est.usage || 0) / 1024 / 1024);
+      const quotaMB = Math.round((est.quota || 0) / 1024 / 1024);
+      const freeMB = quotaMB - usedMB;
+      return { usedMB, quotaMB, freeMB };
+    } catch (e) {}
+  }
+  return { usedMB: 0, quotaMB: 0, freeMB: Infinity };
+}
+
+// Cache stats (Phase 2A — enriched with quota)
 async function getCacheStats() {
   await openTileDB();
-  return new Promise((resolve) => {
+  const tileCount = await new Promise((resolve) => {
     const tx = tileDB.transaction(TILE_STORE, 'readonly');
-    const store = tx.objectStore(TILE_STORE);
-    const req = store.count();
-    req.onsuccess = () => resolve({ totalTiles: req.result });
-    req.onerror = () => resolve({ totalTiles: 0 });
+    const req = tx.objectStore(TILE_STORE).count();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => resolve(0);
   });
+  const quota = await checkStorageQuota();
+  return { totalTiles: tileCount, usedMB: quota.usedMB, quotaMB: quota.quotaMB, freeMB: quota.freeMB };
 }

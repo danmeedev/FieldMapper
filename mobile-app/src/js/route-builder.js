@@ -16,7 +16,7 @@ const ACCESS_TYPES = {
   scramble: { label: 'Scramble', icon: '\u26F0\uFE0F', color: '#9c27b0' }
 };
 
-function startRouteBuilder(map, existingRoute) {
+async function startRouteBuilder(map, existingRoute) {
   routeBuilderActive = true;
   editingRouteId = existingRoute ? existingRoute.id : null;
   routeBuilderPoints = [];
@@ -32,6 +32,24 @@ function startRouteBuilder(map, existingRoute) {
   document.getElementById('rb-point-count').textContent = '0';
   document.getElementById('rb-total-dist').textContent = '0 ft';
   document.getElementById('rb-point-list').innerHTML = '';
+
+  // Check for draft recovery (Phase 3B)
+  if (!existingRoute) {
+    const draft = await getSetting('route-draft');
+    if (draft && draft.points && draft.points.length > 0) {
+      const age = Date.now() - (draft.timestamp || 0);
+      if (age < 24 * 60 * 60 * 1000) { // < 24h old
+        if (confirm(`Recover unsaved route draft "${draft.name || 'untitled'}" (${draft.points.length} points)?`)) {
+          existingRoute = draft;
+          editingRouteId = draft.routeId || null;
+        } else {
+          await saveSetting('route-draft', null);
+        }
+      } else {
+        await saveSetting('route-draft', null);
+      }
+    }
+  }
 
   if (existingRoute && existingRoute.points) {
     document.getElementById('rb-route-name').value = existingRoute.name || '';
@@ -152,6 +170,84 @@ function updateRouteBuilderLine(map) {
   routeBuilderLine = L.polyline(latlngs, {
     color: '#00e676', weight: 4, opacity: 0.8, dashArray: '10,6'
   }).addTo(map);
+  // Enable insertion by clicking the line (Phase 3A)
+  setupRouteLineClick(map);
+}
+
+// --- Route point insertion on polyline click (Phase 3A) ---
+function setupRouteLineClick(map) {
+  if (routeBuilderLine) {
+    routeBuilderLine.on('click', (e) => {
+      if (!routeBuilderActive) return;
+      L.DomEvent.stopPropagation(e);
+      const insertIdx = findNearestSegment(e.latlng);
+      insertRoutePoint(e.latlng, map, insertIdx);
+    });
+  }
+}
+
+function findNearestSegment(latlng) {
+  if (routeBuilderPoints.length < 2) return routeBuilderPoints.length;
+  let minDist = Infinity;
+  let bestIdx = 1;
+  for (let i = 0; i < routeBuilderPoints.length - 1; i++) {
+    const d = distToSegment(latlng, routeBuilderPoints[i], routeBuilderPoints[i + 1]);
+    if (d < minDist) { minDist = d; bestIdx = i + 1; }
+  }
+  return bestIdx;
+}
+
+function distToSegment(p, a, b) {
+  const dx = b.lon - a.lon, dy = b.lat - a.lat;
+  if (dx === 0 && dy === 0) return Math.sqrt((p.lat - a.lat) ** 2 + (p.lng - a.lon) ** 2);
+  let t = ((p.lat - a.lat) * dy + (p.lng - a.lon) * dx) / (dy * dy + dx * dx);
+  t = Math.max(0, Math.min(1, t));
+  const projLat = a.lat + t * dy, projLon = a.lon + t * dx;
+  return Math.sqrt((p.lat - projLat) ** 2 + (p.lng - projLon) ** 2);
+}
+
+function insertRoutePoint(latlng, map, insertIndex) {
+  const point = {
+    lat: latlng.lat, lon: latlng.lng, alt: null,
+    label: `Point ${insertIndex + 1}`, notes: '', accessType: 'any',
+    hazards: '', landmarks: '', directions: '', photos: []
+  };
+  routeBuilderPoints.splice(insertIndex, 0, point);
+  rebuildRouteBuilderMarkers(map);
+}
+
+function rebuildRouteBuilderMarkers(map) {
+  // Clear all existing markers and labels
+  routeBuilderMarkers.forEach(m => map.removeLayer(m));
+  routeBuilderLabels.forEach(l => map.removeLayer(l));
+  routeBuilderMarkers = [];
+  routeBuilderLabels = [];
+
+  // Re-add all points
+  const savedPoints = routeBuilderPoints.slice();
+  routeBuilderPoints = [];
+  savedPoints.forEach(pt => {
+    addRouteBuilderPoint(L.latLng(pt.lat, pt.lon), map, pt);
+  });
+}
+
+// --- Auto-save draft (Phase 3B) ---
+let _draftTimer = null;
+function scheduleDraftSave() {
+  if (_draftTimer) clearTimeout(_draftTimer);
+  _draftTimer = setTimeout(saveDraft, 5000);
+}
+
+async function saveDraft() {
+  if (!routeBuilderActive || routeBuilderPoints.length === 0) return;
+  const draft = {
+    routeId: editingRouteId,
+    name: document.getElementById('rb-route-name')?.value || '',
+    description: document.getElementById('rb-route-desc')?.value || '',
+    points: routeBuilderPoints,
+    timestamp: Date.now()
+  };
+  await saveSetting('route-draft', draft);
 }
 
 function updateRouteBuilderUI() {
@@ -201,6 +297,9 @@ function updateRouteBuilderUI() {
     `;
     list.appendChild(div);
   });
+
+  // Auto-save draft (Phase 3B)
+  if (routeBuilderActive) scheduleDraftSave();
 }
 
 window.showPointEditor = async function(idx) {
@@ -381,6 +480,18 @@ window.saveRouteBuilder = async function() {
     );
   }
 
+  // Calculate elevation gain/loss (Phase 5C)
+  let elevGain = 0, elevLoss = 0;
+  for (let i = 1; i < routeBuilderPoints.length; i++) {
+    const prev = routeBuilderPoints[i - 1];
+    const cur = routeBuilderPoints[i];
+    if (prev.alt != null && cur.alt != null) {
+      const dElev = cur.alt - prev.alt;
+      if (dElev > 0) elevGain += dElev;
+      else elevLoss += Math.abs(dElev);
+    }
+  }
+
   const route = {
     id: editingRouteId || Date.now(),
     name,
@@ -392,20 +503,27 @@ window.saveRouteBuilder = async function() {
       landmarks: p.landmarks, photos: p.photos
     })),
     totalDistance: totalDist,
+    elevGain,
+    elevLoss,
+    updatedAt: Date.now(),
     createdAt: new Date().toISOString()
   };
 
   await saveRoute(route);
+  // Clear draft on save (Phase 3B)
+  await saveSetting('route-draft', null);
   stopRouteBuilder(map);
   loadMapRoutes();
 };
 
-window.cancelRouteBuilder = function() {
+window.cancelRouteBuilder = async function() {
   const map = window.fieldMap;
   if (map) {
     removeGhostTrack(map);
     stopRouteBuilder(map);
   }
+  // Clear draft on cancel (Phase 3B)
+  await saveSetting('route-draft', null);
 };
 
 /**
@@ -635,13 +753,33 @@ async function loadMapRoutes() {
   const list = document.getElementById('route-list');
   if (list) {
     list.innerHTML = '';
-    routes.forEach(r => {
+
+    // Apply search filter (Phase 5B)
+    let filtered = routes;
+    const searchInput = document.getElementById('route-search-input');
+    if (searchInput && searchInput.value.trim()) {
+      const q = searchInput.value.trim().toLowerCase();
+      filtered = routes.filter(r =>
+        (r.name || '').toLowerCase().includes(q) ||
+        (r.description || '').toLowerCase().includes(q)
+      );
+    }
+
+    filtered.forEach(r => {
+      // Elevation gain/loss display (Phase 5C)
+      let elevText = '';
+      if (r.elevGain || r.elevLoss) {
+        const gainFt = Math.round((r.elevGain || 0) * 3.28084);
+        const lossFt = Math.round((r.elevLoss || 0) * 3.28084);
+        elevText = ` | +${gainFt}/-${lossFt} ft`;
+      }
+
       const div = document.createElement('div');
       div.className = 'rb-route-item';
       div.innerHTML = `
         <div style="flex:1;min-width:0">
           <div style="font-weight:bold;font-size:13px">${r.name}</div>
-          <div style="font-size:11px;color:#888">${r.points.length} pts | ${formatRouteDistance(r.totalDistance || 0)}${r.description ? ' | ' + r.description.substring(0, 40) : ''}</div>
+          <div style="font-size:11px;color:#888">${r.points.length} pts | ${formatRouteDistance(r.totalDistance || 0)}${elevText}${r.description ? ' | ' + r.description.substring(0, 40) : ''}</div>
         </div>
         <div style="display:flex;gap:4px;flex-shrink:0">
           <button class="rb-nav-btn" onclick="startMapNavigation(${r.id})">Nav</button>
@@ -845,6 +983,11 @@ async function updateMapNavDisplay() {
   document.getElementById('map-nav-next-btn').disabled = mapNavIndex >= mapNavRoute.points.length - 1;
 }
 
+// Route search filter (Phase 5B)
+window.filterRouteList = function() {
+  loadMapRoutes();
+};
+
 // Update nav panel distance on GPS update
 function onGpsUpdate_mapNav(pos) {
   if (!mapNavActive || !mapNavRoute) return;
@@ -855,6 +998,18 @@ function onGpsUpdate_mapNav(pos) {
   const brng = bearingTo(pos.lat, pos.lon, pt.lat, pt.lon);
   document.getElementById('map-nav-distance').textContent =
     `${formatRouteDistance(dist)} | ${brng.toFixed(0)}\u00B0 ${headingToCardinal(brng)}`;
+
+  // Off-route warning (Phase 5D)
+  const offRouteDist = getDistanceToRoute(pos.lat, pos.lon, mapNavRoute.points);
+  const warnEl = document.getElementById('map-nav-off-route-warning');
+  if (warnEl) {
+    if (offRouteDist > 50) {
+      warnEl.textContent = `Off route: ${Math.round(offRouteDist)}m away`;
+      warnEl.style.display = 'block';
+    } else {
+      warnEl.style.display = 'none';
+    }
+  }
 
   // Auto-advance when within 20m
   if (dist < 20 && mapNavIndex < mapNavRoute.points.length - 1) {
