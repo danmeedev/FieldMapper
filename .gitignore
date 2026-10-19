@@ -25,3 +25,15 @@ mobile-app/node_modules/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Local review backups and runtime logs
+.review-backup/
+.review-logs/
+
+# Distribution staging, downloads and signing secrets
+dist/
+.build-cache/
+*.keystore
+*.jks
+*.p12
+keystore.properties

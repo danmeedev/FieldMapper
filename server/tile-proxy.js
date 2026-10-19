@@ -152,8 +152,9 @@ function fetchAndCacheTile(source, z, x, y, tilePath) {
 
 module.exports = function setupTileProxy(app, tilesDir) {
   // Serve tiles: cache-first, then fetch from internet
-  app.get('/tiles/:layer/:z/:x/:y.png', async (req, res) => {
+  app.get('/tiles/:layer/:z/:x/:y.png', async (req, res, next) => {
     const { layer, z, x, y } = req.params;
+    if (layer === 'contours') return next();
     const tilePath = path.join(tilesDir, layer, z, x, `${y}.png`);
 
     if (fs.existsSync(tilePath)) {
@@ -258,36 +259,52 @@ module.exports = function setupTileProxy(app, tilesDir) {
     else { res.setHeader('Content-Type', 'image/png'); res.send(emptyPng); }
   });
 
-  // Cache stats
-  app.get('/api/cache-stats', (req, res) => {
-    const stats = {};
+  // Cache stats — computed in the BACKGROUND and cached, so this endpoint always
+  // responds instantly. A synchronous walk of a large tile cache (tens of thousands
+  // of files) would otherwise block the event loop for seconds and make the mobile
+  // app's reachability ping time out (reported to the user as "cannot reach server").
+  let _cacheStats = {};
+  let _cacheStatsAt = 0;
+  let _cacheStatsComputing = false;
+  const CACHE_STATS_TTL = 60000;
 
+  async function computeCacheStats() {
+    const fsp = fs.promises;
+    const stats = {};
     for (const layer of Object.keys(TILE_SOURCES)) {
       const layerDir = path.join(tilesDir, layer);
-      let count = 0;
-      let size = 0;
-
-      if (fs.existsSync(layerDir)) {
-        function countDir(dir) {
-          try {
-            const entries = fs.readdirSync(dir, { withFileTypes: true });
-            for (const entry of entries) {
-              if (entry.isDirectory()) {
-                countDir(path.join(dir, entry.name));
-              } else {
-                count++;
-                try { size += fs.statSync(path.join(dir, entry.name)).size; } catch (e) {}
-              }
-            }
-          } catch (e) {}
+      let count = 0, size = 0;
+      async function walk(dir) {
+        let entries;
+        try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch (e) { return; }
+        for (const entry of entries) {
+          const full = path.join(dir, entry.name);
+          if (entry.isDirectory()) { await walk(full); }
+          else { count++; try { size += (await fsp.stat(full)).size; } catch (e) {} }
         }
-        countDir(layerDir);
       }
-
+      await walk(layerDir);
       stats[layer] = { tiles: count, sizeMB: (size / 1024 / 1024).toFixed(1) };
     }
+    return stats;
+  }
 
-    res.json(stats);
+  function refreshCacheStatsInBackground() {
+    if (_cacheStatsComputing) return;
+    _cacheStatsComputing = true;
+    computeCacheStats()
+      .then((s) => { _cacheStats = s; _cacheStatsAt = Date.now(); })
+      .catch(() => {})
+      .finally(() => { _cacheStatsComputing = false; });
+  }
+
+  // Warm the cache once at startup (non-blocking).
+  refreshCacheStatsInBackground();
+
+  app.get('/api/cache-stats', (req, res) => {
+    // Always return the last snapshot immediately; refresh in the background when stale.
+    if (Date.now() - _cacheStatsAt > CACHE_STATS_TTL) refreshCacheStatsInBackground();
+    res.json(_cacheStats);
   });
 
   // Pre-fetch surrounding tiles

@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="lib/leaflet.css">
   <link rel="stylesheet" href="lib/MarkerCluster.css">
   <link rel="stylesheet" href="css/app.css">
+<style>html:not(.ai-ready) [data-ai-tool] { display:none !important; }</style>
 </head>
 <body>
 
@@ -491,6 +492,8 @@
     <button id="save-map-settings" class="panel-action">Save &amp; Test</button>
     <div id="map-settings-status" style="font-size:12px;color:#4caf50;margin-top:4px"></div>
 
+    <button type="button" class="panel-action" onclick="AppUpdates.open()">App Updates</button>
+    <button class="panel-action" onclick="AiSettings.open()" style="margin-top:12px">AI Configuration</button>
     <hr style="border-color:#333;margin:14px 0">
     <h4 style="font-size:14px;margin-bottom:8px">Geofence Alerts</h4>
     <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer">
@@ -530,6 +533,43 @@
     <button class="btn btn-sync" id="weather-refresh-btn">Refresh Weather</button>
     <div id="weather-status" style="font-size:12px;text-align:center;margin:6px 0;min-height:18px"></div>
     <div id="weather-content"></div>
+  </div>
+</div>
+
+<!-- ===== CATALOG VIEW (specimens + dig orders) ===== -->
+<div id="catalog-view" class="view">
+  <div style="padding:12px;overflow-y:auto;height:100%;padding-bottom:70px">
+    <h2 style="text-align:center;font-size:18px;margin-bottom:10px">Catalog</h2>
+
+    <div class="cat-seg">
+      <button id="seg-specimens" class="cat-seg-btn active" onclick="catalogSegment('specimens')">Specimens</button>
+      <button id="seg-orders" class="cat-seg-btn" onclick="catalogSegment('orders')">Orders</button>
+      <button id="seg-digorders" class="cat-seg-btn" onclick="catalogSegment('digorders')">Dig Orders</button>
+    </div>
+
+    <!-- Specimens -->
+    <div id="catalog-specimens">
+      <button class="btn btn-save" onclick="openSpecimenForm()">+ Add Specimen</button>
+      <input type="text" id="specimen-search" placeholder="Search label, name, mineral, locality..." style="width:100%;padding:8px;margin-bottom:6px;border:1px solid #444;border-radius:4px;background:#222;color:#fff;font-size:13px" oninput="refreshSpecimenList()">
+      <div id="specimen-count-bar" style="font-size:12px;color:#888;margin-bottom:6px"></div>
+      <div id="specimen-list"></div>
+    </div>
+
+    <!-- Orders (sales) -->
+    <div id="catalog-orders" style="display:none">
+      <button class="btn btn-save" onclick="openOrderForm()">+ New Order</button>
+      <input type="text" id="order-search" placeholder="Search order #, customer, item..." style="width:100%;padding:8px;margin-bottom:6px;border:1px solid #444;border-radius:4px;background:#222;color:#fff;font-size:13px" oninput="refreshOrderList()">
+      <div id="order-count-bar" style="font-size:12px;color:#888;margin-bottom:6px"></div>
+      <div id="order-list"></div>
+    </div>
+
+    <!-- Dig Orders -->
+    <div id="catalog-digorders" style="display:none">
+      <button class="btn btn-save" onclick="openDigOrderForm()">+ New Dig Order</button>
+      <input type="text" id="digorder-search" placeholder="Search client, material, region..." style="width:100%;padding:8px;margin-bottom:6px;border:1px solid #444;border-radius:4px;background:#222;color:#fff;font-size:13px" oninput="refreshDigOrderList()">
+      <div id="digorder-count-bar" style="font-size:12px;color:#888;margin-bottom:6px"></div>
+      <div id="digorder-list"></div>
+    </div>
   </div>
 </div>
 
@@ -659,6 +699,10 @@
     <span class="tab-icon">🌤️</span>
     Weather
   </button>
+  <button class="tab-btn" data-tab="catalog">
+    <span class="tab-icon">💎</span>
+    Catalog
+  </button>
 </div>
 
 <!-- Scripts: order matters -->
@@ -666,6 +710,7 @@
 <script src="lib/marker-cluster.js"></script>
 <script src="js/waypoint-store.js"></script>
 <script src="js/tile-cache.js"></script>
+<script src="js/ai-settings.js"></script>
 <script src="js/sync-engine.js"></script>
 <script src="js/native-gps.js"></script>
 <script src="js/gpx-utils.js"></script>
@@ -678,5 +723,8 @@
 <script src="js/app.js"></script>
 <script src="js/gps-view.js"></script>
 <script src="js/map-view.js"></script>
+<script src="js/catalog.js"></script>
+<script src="js/diagnostics.js"></script>
+<script src="js/app-updates.js"></script>
 </body>
 </html>

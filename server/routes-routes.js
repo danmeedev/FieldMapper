@@ -1,5 +1,8 @@
 const path = require('path');
 const fs = require('fs');
+const { randomUUID } = require('crypto');
+const photoFilename = ref => String(ref).split('/').pop().split('?')[0].split('#')[0];
+const { addTombstone, clearTombstone } = require('./tombstones');
 
 module.exports = function setupRouteRoutes(app, dataDir, { photosDir }) {
   const routesFile = path.join(dataDir, 'routes.json');
@@ -31,13 +34,13 @@ module.exports = function setupRouteRoutes(app, dataDir, { photosDir }) {
               const matches = dataUrl.match(/^data:image\/(\w+);base64,(.+)$/);
               if (matches) {
                 const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
-                const filename = `route-${route.id}-pt${pi}-${i}.${ext}`;
+                const filename = `route-${String(route.id).replace(/[^a-zA-Z0-9_-]/g, "_")}-${randomUUID()}.${ext}`;
                 const filePath = path.join(photosDir, filename);
                 fs.writeFileSync(filePath, Buffer.from(matches[2], 'base64'));
                 savedPhotos.push(filename);
               }
             } else {
-              savedPhotos.push(dataUrl); // already a filename
+              savedPhotos.push(photoFilename(dataUrl)); // normalize pulled URLs back to filenames
             }
           });
           pt.photos = savedPhotos;
@@ -46,10 +49,11 @@ module.exports = function setupRouteRoutes(app, dataDir, { photosDir }) {
     }
 
     const routes = loadRoutes();
-    const idx = routes.findIndex(r => r.id === route.id);
+    const idx = routes.findIndex(r => String(r.id) === String(route.id));
     if (idx >= 0) routes[idx] = route;
     else routes.push(route);
     saveRoutes(routes);
+    clearTombstone(dataDir, 'routes', route.id); // re-created/updated -> resurrect
     console.log(`Route saved: ${route.name} (${route.points ? route.points.length : 0} points)`);
     res.json({ ok: true });
   });
@@ -63,13 +67,14 @@ module.exports = function setupRouteRoutes(app, dataDir, { photosDir }) {
     let routes = loadRoutes();
     routes = routes.filter(r => String(r.id) !== String(id));
     saveRoutes(routes);
+    addTombstone(dataDir, 'routes', id, req.query.deletedAt ? Number(req.query.deletedAt) : undefined);
     res.json({ ok: true });
   });
 
   app.get('/api/export/route/:id', (req, res) => {
-    const id = parseInt(req.params.id);
+    const id = req.params.id;
     const routes = loadRoutes();
-    const route = routes.find(r => r.id === id);
+    const route = routes.find(r => String(r.id) === String(id));
     if (!route) return res.status(404).json({ error: 'Route not found' });
 
     // Include photo data URLs for export
@@ -77,7 +82,7 @@ module.exports = function setupRouteRoutes(app, dataDir, { photosDir }) {
       route.points.forEach(pt => {
         if (pt.photos) {
           pt.photoFiles = pt.photos;
-          pt.photoUrls = pt.photos.map(f => `/photos/${f}`);
+          pt.photoUrls = pt.photos.map(f => `/photos/${photoFilename(f)}`);
         }
       });
     }

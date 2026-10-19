@@ -1,0 +1,9 @@
+{
+  "applicationId": "com.fieldmapper.app",
+  "androidOrigin": "https://localhost",
+  "releaseCertificateSHA256": "6b6a070cbf9dcbdd06a37c59f2e41a347993324ced8a4715e04d22af7410162f",
+  "windowsDataFolder": "Field Mapper",
+  "recordDatabase": "fieldmapper-data",
+  "tileDatabase": "fieldmapper-tiles",
+  "trackingDatabase": "fieldmapper_tracking.db"
+}

@@ -251,9 +251,9 @@ ws.onmessage = (event) => {
     }
   }
 
-  // Waypoint from phone
+  // Waypoint relayed from a phone push — add to the view, don't re-POST it.
   if (data.type === 'waypoint') {
-    addWaypoint(data);
+    addWaypoint(data, { fromServer: true });
   }
 };
 
@@ -288,11 +288,14 @@ document.getElementById('show-track').addEventListener('change', (e) => {
 });
 
 // Panel toggle system
-const panels = ['layer-panel', 'wp-panel', 'sync-panel', 'ai-panel', 'settings-panel', 'routes-panel', 'measure-panel'];
+const panels = ['layer-panel', 'wp-panel', 'sync-panel', 'ai-panel', 'settings-panel', 'routes-panel', 'measure-panel', 'catalog-panel', 'orders-panel', 'digorders-panel'];
 const toggles = {
   'toggle-panel': 'layer-panel',
   'toggle-wp': 'wp-panel',
   'toggle-routes': 'routes-panel',
+  'toggle-catalog': 'catalog-panel',
+  'toggle-orders': 'orders-panel',
+  'toggle-digorders': 'digorders-panel',
   'toggle-measure': 'measure-panel',
   'toggle-sync': 'sync-panel',
   'toggle-ai': 'ai-panel',
@@ -336,7 +339,32 @@ const PIN_PRESETS = {
 const CUSTOM_COLORS = ['#f44336','#e91e63','#9c27b0','#673ab7','#3f51b5','#2196f3','#00bcd4','#009688','#4caf50','#8bc34a','#ffc107','#ff9800','#ff5722','#795548','#607d8b','#ffffff'];
 
 // -- Waypoints --
-function addWaypoint(wp) {
+// The laptop is "home base": waypoints persist to the server (data/waypoints.json),
+// not just localStorage, so laptop-created/edited/deleted pins sync to the phone.
+// localStorage is kept only as an offline cache + immediate render.
+
+// Deposit a waypoint to the server (home base). Bumps updatedAt so the phone pulls it.
+async function persistWaypointToServer(wp) {
+  try {
+    await fetch('/api/waypoint', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...wp, updatedAt: wp.updatedAt || Date.now() })
+    });
+  } catch (e) { console.error('Failed to save waypoint to server:', e); }
+}
+
+// Delete a waypoint on the server (writes a tombstone so the delete reaches the phone).
+async function deleteWaypointOnServer(id) {
+  try {
+    await fetch(`/api/waypoint/${encodeURIComponent(id)}?deletedAt=${Date.now()}`, { method: 'DELETE' });
+  } catch (e) { console.error('Failed to delete waypoint on server:', e); }
+}
+
+// Add or update a waypoint in the local view. opts.fromServer => do NOT re-POST
+// (used for the WebSocket relay + initial load, which already originate from the server).
+function addWaypoint(wp, opts) {
+  const fromServer = opts && opts.fromServer;
   const waypoint = {
     id: wp.id || Date.now(),
     lat: wp.lat,
@@ -349,13 +377,28 @@ function addWaypoint(wp) {
     samples: wp.samples || [],
     timestamp: wp.timestamp || new Date().toISOString(),
     altitude: wp.altitude || null,
-    photos: wp.photos || []
+    photos: wp.photos || [],
+    updatedAt: wp.updatedAt || (fromServer ? undefined : Date.now())
   };
 
-  waypoints.push(waypoint);
+  // Upsert by id so a server echo (after our own POST) never duplicates the pin.
+  const idx = waypoints.findIndex(w => String(w.id) === String(waypoint.id));
+  let merged = waypoint;
+  if (idx >= 0) { merged = { ...waypoints[idx], ...waypoint }; waypoints[idx] = merged; }
+  else { waypoints.push(merged); }
   saveWaypoints();
-  renderWaypointMarker(waypoint);
+
+  // Re-render this pin's marker (remove any existing one first).
+  const entry = waypointMarkers.find(w => String(w.id) === String(merged.id));
+  if (entry) {
+    waypointCluster.removeMarker(entry.marker);
+    map.removeLayer(entry.marker);
+    waypointMarkers = waypointMarkers.filter(w => String(w.id) !== String(merged.id));
+  }
+  renderWaypointMarker(merged);
   renderWaypointList();
+
+  if (!fromServer) persistWaypointToServer(merged);
 }
 
 function saveWaypoints() {
@@ -418,7 +461,7 @@ function buildPopupContent(wp) {
   popup += `<small style="color:#999">${new Date(wp.timestamp).toLocaleString()}</small>`;
   popup += `<div style="display:flex;gap:4px">`;
   popup += `<button class="wp-popup-btn" style="background:#455a64" onclick="editWaypoint(${wp.id})">Edit</button>`;
-  popup += `<button class="wp-popup-btn" onclick="analyzeWaypoint(${wp.id})">AI Analyze</button>`;
+  popup += `<button data-ai-tool class="wp-popup-btn" onclick="analyzeWaypoint(${wp.id})">AI Analyze</button>`;
   popup += `</div></div></div>`;
   return popup;
 }
@@ -489,13 +532,14 @@ function renderLegend() {
 }
 
 window.removeWaypoint = function(id) {
-  waypoints = waypoints.filter(w => w.id !== id);
+  waypoints = waypoints.filter(w => String(w.id) !== String(id));
   saveWaypoints();
-  const entry = waypointMarkers.find(w => w.id === id);
+  deleteWaypointOnServer(id); // remove from home base + tombstone -> deletes on phone too
+  const entry = waypointMarkers.find(w => String(w.id) === String(id));
   if (entry) {
     waypointCluster.removeMarker(entry.marker);
     map.removeLayer(entry.marker);
-    waypointMarkers = waypointMarkers.filter(w => w.id !== id);
+    waypointMarkers = waypointMarkers.filter(w => String(w.id) !== String(id));
   }
   renderWaypointList();
 };
@@ -557,7 +601,9 @@ window.editWaypoint = function(id) {
     wp.category = document.getElementById('pin-category').value;
     wp.notes = document.getElementById('pin-notes').value.trim();
     wp.color = document.getElementById('pin-custom-color').value || null;
+    wp.updatedAt = Date.now();
     saveWaypoints();
+    persistWaypointToServer(wp); // deposit the edit to home base -> syncs to phone
     // Re-render marker
     const entry = waypointMarkers.find(w => w.id === id);
     if (entry) {
@@ -758,30 +804,35 @@ function exportAllData() {
   URL.revokeObjectURL(url);
 }
 
-// Load saved waypoints from server on startup (these have photo filenames)
-fetch('/api/waypoints')
-  .then(r => r.ok ? r.json() : [])
-  .then(serverWaypoints => {
-    // Merge server waypoints (which have photo filenames) with any localStorage ones
-    const existingIds = new Set(waypoints.map(w => w.id));
-    serverWaypoints.forEach(wp => {
-      if (!existingIds.has(wp.id)) {
-        waypoints.push(wp);
-      } else {
-        // Update existing with server data (photos)
-        const idx = waypoints.findIndex(w => w.id === wp.id);
-        if (idx >= 0) waypoints[idx] = { ...waypoints[idx], ...wp };
-      }
-    });
-    saveWaypoints();
+// Load waypoints from home base (the server is the source of truth) on startup.
+// Genuine laptop-only pins (created before this was server-backed) are migrated up;
+// pins the phone deleted (server tombstone) are dropped instead of being resurrected.
+Promise.all([
+  fetch('/api/waypoints').then(r => r.ok ? r.json() : []).catch(() => null),
+  fetch('/api/tombstones').then(r => r.ok ? r.json() : {}).catch(() => ({}))
+]).then(([serverWaypoints, tombs]) => {
+  if (serverWaypoints === null) {
+    // Offline — fall back to the localStorage cache.
     waypoints.forEach(wp => renderWaypointMarker(wp));
     renderWaypointList();
-  })
-  .catch(() => {
-    // Offline or no server data, just use localStorage
-    waypoints.forEach(wp => renderWaypointMarker(wp));
-    renderWaypointList();
-  });
+    return;
+  }
+  const wpTombs = (tombs && tombs.waypoints) || {};
+  const serverIds = new Set(serverWaypoints.map(w => String(w.id)));
+  const localOnly = waypoints.filter(w =>
+    !serverIds.has(String(w.id)) && wpTombs[String(w.id)] == null);
+
+  waypoints = [...serverWaypoints, ...localOnly];
+  saveWaypoints();
+  waypoints.forEach(wp => renderWaypointMarker(wp));
+  renderWaypointList();
+
+  // Deposit any laptop-only pins to home base so the phone receives them on next sync.
+  localOnly.forEach(wp => persistWaypointToServer(wp));
+}).catch(() => {
+  waypoints.forEach(wp => renderWaypointMarker(wp));
+  renderWaypointList();
+});
 
 // Keyboard shortcut: 'E' to export
 document.addEventListener('keydown', (e) => {
@@ -848,37 +899,9 @@ ws.addEventListener('message', (event) => {
   } catch (e) {}
 });
 
-// --- Settings ---
-// Load current config
-fetch('/api/config')
-  .then(r => r.json())
-  .then(config => {
-    if (config.anthropicApiKeySet) {
-      document.getElementById('api-key-input').placeholder = 'Key set (****' + config.anthropicApiKey.slice(-4) + ')';
-    }
-  })
-  .catch(() => {});
-
-document.getElementById('save-settings').addEventListener('click', async () => {
-  const apiKey = document.getElementById('api-key-input').value.trim();
-  if (!apiKey) { showStatus('settings-status', 'Enter an API key', 'error'); return; }
-
-  try {
-    await fetch('/api/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ anthropicApiKey: apiKey })
-    });
-    showStatus('settings-status', 'Settings saved!', 'success');
-    document.getElementById('api-key-input').value = '';
-    document.getElementById('api-key-input').placeholder = 'Key set (****' + apiKey.slice(-4) + ')';
-  } catch (e) {
-    showStatus('settings-status', 'Failed to save', 'error');
-  }
-});
-
 // --- AI Analysis ---
 window.analyzeWaypoint = async function(waypointId) {
+  try { await AiSettings.requireReady(); } catch (e) { await AiSettings.open(); return; }
   // Open AI panel and run analysis for this waypoint
   panels.forEach(p => document.getElementById(p).classList.remove('visible'));
   document.querySelectorAll('.toolbar-btn').forEach(b => b.classList.remove('active'));
@@ -893,6 +916,7 @@ document.getElementById('ai-analyze-all').addEventListener('click', () => {
 });
 
 async function runAIAnalysis(waypointId) {
+  try { await AiSettings.requireReady(); } catch (e) { await AiSettings.open(); return; }
   const statusEl = document.getElementById('ai-status');
   const resultEl = document.getElementById('ai-result');
   const btn = document.getElementById('ai-analyze-all');
@@ -910,6 +934,7 @@ async function runAIAnalysis(waypointId) {
     const result = await resp.json();
 
     if (result.error) {
+      await AiSettings.refresh();
       showStatus('ai-status', result.error, 'error');
     } else {
       showStatus('ai-status', 'Analysis complete', 'success');
@@ -1201,7 +1226,7 @@ function showRouteOnMap(route) {
     if (pt.photos && pt.photos.length > 0) {
       popup += '<div style="display:flex;gap:4px;margin:4px 0">';
       pt.photos.forEach(url => {
-        const src = url.startsWith('data:') ? url : `/photos/${url}`;
+        const src = url.startsWith('data:') ? url : `/photos/${String(url).split('/').pop().split('?')[0]}`;
         popup += `<img src="${src}" style="width:60px;height:60px;object-fit:cover;border-radius:4px">`;
       });
       popup += '</div>';

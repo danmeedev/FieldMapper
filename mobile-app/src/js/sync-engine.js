@@ -1,294 +1,342 @@
-// Sync engine - push waypoints + photos to laptop server, pull from laptop
-// Bidirectional sync with the same POST /api/waypoint endpoint
+// Sync engine — phone-orchestrated BIDIRECTIONAL reconciliation with the laptop hub.
+//
+// On sync, the phone compares its records against the laptop's for each type
+// (waypoints, routes, specimens, dig orders) and resolves every id by last-write-wins
+// using `updatedAt`, with delete-tombstones so a delete on one side propagates instead
+// of the record being re-created. Track sessions remain append-only (new-id merge).
+
+// ---- Pure reconciliation planner (no I/O — unit-testable) ----
+// Inputs: server live items[], server tombstones {id:deletedAt}, local live items[],
+//         local tombstones {id:deletedAt}.
+// Output: actions [{op, id, localItem?, serverItem?, deletedAt?}].
+function planReconcile(serverItems, serverTombs, localItems, localTombs) {
+  serverTombs = serverTombs || {};
+  localTombs = localTombs || {};
+  const sById = new Map((serverItems || []).map(i => [String(i.id), i]));
+  const lById = new Map((localItems || []).map(i => [String(i.id), i]));
+  const ids = new Set([
+    ...sById.keys(), ...lById.keys(),
+    ...Object.keys(serverTombs), ...Object.keys(localTombs)
+  ]);
+  const actions = [];
+  ids.forEach(id => {
+    const s = sById.get(id) || null;
+    const l = lById.get(id) || null;
+    const sDel = serverTombs[id] || 0;
+    const lDel = localTombs[id] || 0;
+    const sVer = s ? (s.updatedAt || 0) : 0;
+    const lVer = l ? (l.updatedAt || 0) : 0;
+
+    if (s && l) {
+      // Both live -> newer wins. Equal -> already in sync.
+      if (lVer > sVer) actions.push({ op: 'push-update', id, localItem: l });
+      else if (sVer > lVer) actions.push({ op: 'pull-update', id, serverItem: s });
+    } else if (s && !l) {
+      // Server live; local absent or deleted.
+      if (lDel && lDel > sVer) actions.push({ op: 'push-delete', id, deletedAt: lDel });
+      else actions.push({ op: 'pull-create', id, serverItem: s }); // create or resurrect locally
+    } else if (!s && l) {
+      // Local live; server absent or deleted.
+      if (sDel && sDel > lVer) actions.push({ op: 'pull-delete', id, localItem: l, deletedAt: sDel });
+      else actions.push({ op: 'push-create', id, localItem: l }); // create or resurrect on server
+    }
+    // else: neither side live (both deleted / tombstone-only) -> nothing to transfer
+  });
+  return actions;
+}
+
+async function fetchSyncSnapshot(url, kind) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`Sync read failed (${r.status}): ${kind}`);
+  const value = await r.json();
+  if (kind === 'tombstones') {
+    if (!value || typeof value !== 'object' || Array.isArray(value) ||
+        Object.values(value).some(group => !group || typeof group !== 'object' || Array.isArray(group) ||
+          Object.values(group).some(t => !Number.isFinite(t) || t <= 0))) {
+      throw new Error('Invalid sync tombstone snapshot');
+    }
+  } else if (!Array.isArray(value) || value.some(item => !item || item.id == null)) {
+    throw new Error(`Invalid sync list: ${kind}`);
+  }
+  return value;
+}
+
+// Run the reconciliation for one record type using its descriptor.
+async function reconcileType(serverUrl, allTombs, desc, stats) {
+  const serverItems = await fetchSyncSnapshot(`${serverUrl}${desc.listPath}`, desc.type);
+  const serverTombs = (allTombs && allTombs[desc.type]) || {};
+  const localItems = await desc.getLocal();
+  const localTombs = (await getLocalTombstones())[desc.type] || {};
+
+  const actions = planReconcile(serverItems, serverTombs, localItems, localTombs);
+
+  for (const a of actions) {
+    try {
+      if (a.op === 'push-create' || a.op === 'push-update') {
+        const ok = await desc.push(a.localItem, serverUrl);
+        if (ok) {
+          // push() stamps a.localItem.updatedAt if it was missing; persist that exact
+          // value locally so the local store and server agree (no spurious re-pull).
+          await desc.markSynced(a.localItem.id, a.localItem.updatedAt);
+          if (a.op === 'push-create') stats.pushedCreated++; else stats.pushedUpdated++;
+        } else { stats.errors++; }
+      } else if (a.op === 'pull-create' || a.op === 'pull-update') {
+        await desc.saveLocal(a.serverItem, serverUrl);
+        await clearLocalTombstone(desc.type, a.serverItem.id);
+        if (a.op === 'pull-create') stats.pulledCreated++; else stats.pulledUpdated++;
+      } else if (a.op === 'push-delete') {
+        const ok = await desc.remoteDelete(a.id, a.deletedAt, serverUrl);
+        if (ok) { stats.pushedDeleted++; await clearLocalTombstone(desc.type, a.id); }
+        else stats.errors++;
+      } else if (a.op === 'pull-delete') {
+        await desc.deleteLocal(a.localItem.id, a.deletedAt);
+        stats.pulledDeleted++;
+      }
+    } catch (e) {
+      stats.errors++;
+      console.error(`[sync ${desc.type}] ${a.op} ${a.id} failed:`, e.message);
+    }
+  }
+
+  // Bound local-tombstone growth: once the server holds the authoritative tombstone,
+  // the local copy is redundant (server-tombstone + locally-absent already no-ops).
+  const freshLocalTombs = (await getLocalTombstones())[desc.type] || {};
+  for (const tid of Object.keys(freshLocalTombs)) {
+    if (serverTombs[tid] != null) await clearLocalTombstone(desc.type, tid);
+  }
+}
+
+function mapPhotoFilenamesToUrls(arr, serverUrl) {
+  return (arr || []).map(p =>
+    (p && (p.startsWith('data:') || p.startsWith('http'))) ? p : `${serverUrl}/photos/${p}`);
+}
+
+// ---- Per-type descriptors ----
+const SYNC_DESCRIPTORS = [
+  {
+    type: 'waypoints',
+    listPath: '/api/waypoints',
+    getLocal: () => getAllWaypoints(),
+    markSynced: (id, updatedAt) => markSynced(id, updatedAt),
+    push: async (wp, serverUrl) => {
+      wp.updatedAt = wp.updatedAt || Date.now(); // persisted via markSynced after push
+      const photos = await getPhotos(wp.id);
+      const payload = { ...wp, photoData: photos.map(p => p.dataUrl) };
+      const r = await fetch(`${serverUrl}/api/waypoint`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+      return r.ok;
+    },
+    saveLocal: async (wp, serverUrl) => {
+      const files = Array.isArray(wp.photos) ? wp.photos.slice() : [];
+      const staged = [];
+      for (const fn of files) {
+        if (typeof fn !== 'string') throw new Error('Invalid waypoint photo reference');
+        if (fn.startsWith('data:image/')) { staged.push(fn); continue; }
+        const url = fn.startsWith('http') ? fn : `${serverUrl}/photos/${fn}`;
+        const pr = await fetch(url);
+        if (!pr.ok) throw new Error(`Waypoint photo download failed (${pr.status})`);
+        const blob = await pr.blob();
+        if (!blob.size || !blob.type.startsWith('image/')) throw new Error('Invalid waypoint image response');
+        staged.push(await new Promise((resolve, reject) => {
+          const rd = new FileReader(); rd.onerror = () => reject(new Error('Photo read failed'));
+          rd.onloadend = () => resolve(rd.result); rd.readAsDataURL(blob);
+        }));
+      }
+      // Commit record + complete photo set in one transaction; any failure preserves the old set.
+      await replaceSyncedWaypointPhotos({ ...wp, photoCount: staged.length }, staged);
+    },
+    remoteDelete: async (id, deletedAt, serverUrl) => {
+      const r = await fetch(`${serverUrl}/api/waypoint/${encodeURIComponent(id)}?deletedAt=${deletedAt || Date.now()}`, { method: 'DELETE' });
+      return r.ok;
+    },
+    deleteLocal: async (id, deletedAt) => { await deleteWaypoint(id, { deletedAt }); }
+  },
+  {
+    type: 'routes',
+    listPath: '/api/routes',
+    getLocal: () => getAllRoutes(),
+    markSynced: (id, updatedAt) => markRouteSynced(id, updatedAt),
+    push: async (route, serverUrl) => {
+      route.updatedAt = route.updatedAt || Date.now();
+      const payload = JSON.parse(JSON.stringify(route));
+      if (payload.points) {
+        for (const pt of payload.points) {
+          if (pt.photos && pt.photos.length) {
+            const resolved = [];
+            for (const ref of pt.photos) { const u = await resolveRoutePhoto(ref); if (u) resolved.push(u); }
+            pt.photos = resolved;
+          }
+        }
+      }
+      const r = await fetch(`${serverUrl}/api/route`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+      return r.ok;
+    },
+    saveLocal: async (route, serverUrl) => {
+      if (route.points) route.points.forEach(pt => { if (pt.photos) pt.photos = mapPhotoFilenamesToUrls(pt.photos, serverUrl); });
+      await saveRoute(route, { fromSync: true });
+    },
+    remoteDelete: async (id, deletedAt, serverUrl) => {
+      const r = await fetch(`${serverUrl}/api/route/${encodeURIComponent(id)}?deletedAt=${deletedAt || Date.now()}`, { method: 'DELETE' });
+      return r.ok;
+    },
+    deleteLocal: async (id, deletedAt) => { await deleteRoute(id, { deletedAt }); }
+  },
+  {
+    type: 'specimens',
+    listPath: '/api/specimens',
+    getLocal: () => getAllSpecimens(),
+    markSynced: (id, updatedAt) => markSpecimenSynced(id, updatedAt),
+    push: async (sp, serverUrl) => {
+      sp.updatedAt = sp.updatedAt || Date.now();
+      const payload = JSON.parse(JSON.stringify(sp));
+      if (payload.photos && payload.photos.length) {
+        const resolved = [];
+        for (const ref of payload.photos) { const u = await resolveRoutePhoto(ref); if (u) resolved.push(u); }
+        payload.photos = resolved;
+      }
+      if (payload.uv && payload.uv.photoRef) payload.uv.photoRef = await resolveRoutePhoto(payload.uv.photoRef);
+      const r = await fetch(`${serverUrl}/api/specimen`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+      return r.ok;
+    },
+    saveLocal: async (sp, serverUrl) => {
+      if (sp.photos) sp.photos = mapPhotoFilenamesToUrls(sp.photos, serverUrl);
+      if (sp.uv && sp.uv.photoRef && !(sp.uv.photoRef.startsWith('data:') || sp.uv.photoRef.startsWith('http'))) {
+        sp.uv.photoRef = `${serverUrl}/photos/${sp.uv.photoRef}`;
+      }
+      await saveSpecimen(sp, { fromSync: true });
+    },
+    remoteDelete: async (id, deletedAt, serverUrl) => {
+      const r = await fetch(`${serverUrl}/api/specimen/${encodeURIComponent(id)}?deletedAt=${deletedAt || Date.now()}`, { method: 'DELETE' });
+      return r.ok;
+    },
+    deleteLocal: async (id, deletedAt) => { await deleteSpecimen(id, { deletedAt }); }
+  },
+  {
+    type: 'digOrders',
+    listPath: '/api/digorders',
+    getLocal: () => getAllDigOrders(),
+    markSynced: (id, updatedAt) => markDigOrderSynced(id, updatedAt),
+    push: async (order, serverUrl) => {
+      order.updatedAt = order.updatedAt || Date.now();
+      const payload = JSON.parse(JSON.stringify(order));
+      if (payload.photos && payload.photos.length) {
+        const resolved = [];
+        for (const ref of payload.photos) { const u = await resolveRoutePhoto(ref); if (u) resolved.push(u); }
+        payload.photos = resolved;
+      }
+      const r = await fetch(`${serverUrl}/api/digorder`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+      return r.ok;
+    },
+    saveLocal: async (order, serverUrl) => {
+      if (order.photos) order.photos = mapPhotoFilenamesToUrls(order.photos, serverUrl);
+      await saveDigOrder(order, { fromSync: true });
+    },
+    remoteDelete: async (id, deletedAt, serverUrl) => {
+      const r = await fetch(`${serverUrl}/api/digorder/${encodeURIComponent(id)}?deletedAt=${deletedAt || Date.now()}`, { method: 'DELETE' });
+      return r.ok;
+    },
+    deleteLocal: async (id, deletedAt) => { await deleteDigOrder(id, { deletedAt }); }
+  },
+  {
+    type: 'orders',
+    listPath: '/api/orders',
+    getLocal: () => getAllOrders(),
+    markSynced: (id, updatedAt) => markOrderSynced(id, updatedAt),
+    push: async (order, serverUrl) => {
+      order.updatedAt = order.updatedAt || Date.now();
+      const r = await fetch(`${serverUrl}/api/order`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(order)
+      });
+      return r.ok;
+    },
+    saveLocal: async (order, serverUrl) => { await saveOrder(order, { fromSync: true }); },
+    remoteDelete: async (id, deletedAt, serverUrl) => {
+      const r = await fetch(`${serverUrl}/api/order/${encodeURIComponent(id)}?deletedAt=${deletedAt || Date.now()}`, { method: 'DELETE' });
+      return r.ok;
+    },
+    deleteLocal: async (id, deletedAt) => { await deleteOrder(id, { deletedAt }); }
+  }
+];
 
 async function syncToLaptop(onProgress) {
   const serverUrl = await getSetting('laptopUrl');
   if (!serverUrl) throw new Error('No laptop server URL configured. Go to Map > Settings to enter your laptop URL.');
 
-  // Test connection first
   const connected = await checkLaptopConnection();
   if (!connected) throw new Error('Cannot reach laptop server. Check URL and make sure you are on the same WiFi network.');
 
-  let pushed = 0;
-  let pulled = 0;
-  let errors = 0;
-  const failedIds = [];
+  const stats = {
+    pushedCreated: 0, pushedUpdated: 0, pushedDeleted: 0,
+    pulledCreated: 0, pulledUpdated: 0, pulledDeleted: 0,
+    errors: 0, tracksPushed: 0, tracksPulled: 0
+  };
 
-  // --- RETRY QUEUE: Attempt previously failed pushes first ---
-  const retryQueue = (await getSetting('sync-retry-queue')) || [];
-  for (const retryId of retryQueue) {
-    try {
-      const wp = await getWaypoint(retryId);
-      if (!wp) continue;
-      const photos = await getPhotos(wp.id);
-      const photoDataUrls = photos.map(p => p.dataUrl);
+  // One snapshot of the laptop's delete-tombstones for the whole pass.
+  const allTombs = await fetchSyncSnapshot(`${serverUrl}/api/tombstones`, 'tombstones');
 
-      const payload = {
-        ...wp,
-        updatedAt: wp.updatedAt || Date.now(),
-        photoData: photoDataUrls
-      };
-
-      const resp = await fetch(`${serverUrl}/api/waypoint`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      if (resp.ok) {
-        await markSynced(wp.id);
-        pushed++;
-      } else {
-        failedIds.push(wp.id);
-        errors++;
-      }
-    } catch (e) {
-      console.error(`Retry push error for ${retryId}:`, e.message);
-      failedIds.push(retryId);
-      errors++;
-    }
+  const totalSteps = SYNC_DESCRIPTORS.length + 1; // +1 for track sessions
+  let step = 0;
+  for (const desc of SYNC_DESCRIPTORS) {
+    try { await reconcileType(serverUrl, allTombs, desc, stats); }
+    catch (e) { stats.errors++; console.error(`[sync ${desc.type}] snapshot failed:`, e.message); }
+    step++;
+    if (onProgress) onProgress(step, totalSteps);
   }
 
-  // --- PUSH: Send unsynced waypoints to laptop ---
-  const unsynced = await getUnsyncedWaypoints();
-  const totalWork = unsynced.length + 1; // +1 for pull phase
-
-  for (const wp of unsynced) {
-    try {
-      const photos = await getPhotos(wp.id);
-      const photoDataUrls = photos.map(p => p.dataUrl);
-
-      const payload = {
-        ...wp,
-        updatedAt: wp.updatedAt || Date.now(),
-        photoData: photoDataUrls
-      };
-
-      const resp = await fetch(`${serverUrl}/api/waypoint`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      if (resp.ok) {
-        await markSynced(wp.id);
-        pushed++;
-      } else {
-        console.error(`Sync push failed for ${wp.name}: ${resp.status}`);
-        failedIds.push(wp.id);
-        errors++;
-      }
-    } catch (e) {
-      console.error(`Sync push error for ${wp.name}:`, e.message);
-      failedIds.push(wp.id);
-      errors++;
-    }
-
-    if (onProgress) onProgress(pushed + errors, totalWork, pushed, errors);
-  }
-
-  // --- PULL: Get waypoints from laptop, with conflict resolution ---
+  // --- Track sessions: append-only, never edited/deleted (new-id merge both ways) ---
   try {
-    const resp = await fetch(`${serverUrl}/api/waypoints`);
-    if (resp.ok) {
-      const serverWps = await resp.json();
-      const localWps = await getAllWaypoints();
-      const localById = new Map(localWps.map(w => [w.id, w]));
-
-      for (const wp of serverWps) {
-        const localWp = localById.get(wp.id);
-        if (!localWp) {
-          // New waypoint - save it
-          wp.synced = true;
-          await saveWaypoint(wp);
-          pulled++;
-        } else if (wp.updatedAt && (!localWp.updatedAt || wp.updatedAt > localWp.updatedAt)) {
-          // Server version is newer - update local copy
-          wp.synced = true;
-          await saveWaypoint(wp);
-          pulled++;
-        }
-
-        // Pull photos for this waypoint
-        if (wp.photoFiles && wp.photoFiles.length > 0) {
-          for (let i = 0; i < wp.photoFiles.length; i++) {
-            const filename = wp.photoFiles[i];
-            try {
-              const photoResp = await fetch(`${serverUrl}/photos/${filename}`);
-              if (photoResp.ok) {
-                const blob = await photoResp.blob();
-                const reader = new FileReader();
-                const dataUrl = await new Promise((resolve) => {
-                  reader.onloadend = () => resolve(reader.result);
-                  reader.readAsDataURL(blob);
-                });
-                await savePhoto(wp.id, i, dataUrl);
-              }
-            } catch (photoErr) {
-              console.error(`Failed to pull photo ${filename}:`, photoErr.message);
-            }
-          }
-        }
-      }
-    }
-  } catch (e) {
-    console.error('Pull from laptop failed:', e.message);
-  }
-
-  // --- RE-QUERY: catch waypoints added during sync (Phase 4A) ---
-  const lateUnsynced = await getUnsyncedWaypoints();
-  for (const wp of lateUnsynced) {
-    // Skip any we already tried
-    if (unsynced.find(u => u.id === wp.id)) continue;
-    try {
-      const photos = await getPhotos(wp.id);
-      const photoDataUrls = photos.map(p => p.dataUrl);
-      const payload = { ...wp, updatedAt: wp.updatedAt || Date.now(), photoData: photoDataUrls };
-      const resp = await fetch(`${serverUrl}/api/waypoint`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      if (resp.ok) { await markSynced(wp.id); pushed++; }
-      else { failedIds.push(wp.id); errors++; }
-    } catch (e) { failedIds.push(wp.id); errors++; }
-  }
-
-  // Update retry queue with all failures
-  await saveSetting('sync-retry-queue', failedIds);
-
-  // --- PUSH ROUTES: Send local routes to laptop (with photo resolution, Phase 3C) ---
-  let routesPushed = 0;
-  try {
-    const localRoutes = await getAllRoutes();
-    for (const route of localRoutes) {
-      try {
-        // Resolve photo references to data URLs for server (Phase 3C)
-        const routePayload = JSON.parse(JSON.stringify(route));
-        if (routePayload.points) {
-          for (const pt of routePayload.points) {
-            if (pt.photos && pt.photos.length > 0) {
-              const resolved = [];
-              for (const ref of pt.photos) {
-                const url = await resolveRoutePhoto(ref);
-                if (url) resolved.push(url);
-              }
-              pt.photos = resolved;
-            }
-          }
-        }
-        if (!routePayload.updatedAt) routePayload.updatedAt = Date.now();
-        const resp = await fetch(`${serverUrl}/api/route`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(routePayload)
-        });
-        if (resp.ok) routesPushed++;
-      } catch (e) {
-        console.error(`Route push error for ${route.name}:`, e.message);
-      }
-    }
-  } catch (e) {
-    console.error('Route push failed:', e.message);
-  }
-
-  // --- PULL ROUTES: Get routes from laptop — import new OR update if newer (Phase 4A) ---
-  let routesPulled = 0;
-  try {
-    const resp = await fetch(`${serverUrl}/api/routes`);
-    if (resp.ok) {
-      const serverRoutes = await resp.json();
-      const localRoutes = await getAllRoutes();
-      const localRouteMap = new Map(localRoutes.map(r => [r.id, r]));
-
-      for (const route of serverRoutes) {
-        const local = localRouteMap.get(route.id);
-        const isNew = !local;
-        const isNewer = local && route.updatedAt && (!local.updatedAt || route.updatedAt > local.updatedAt);
-
-        if (isNew || isNewer) {
-          // Convert server photo filenames to URLs for offline use
-          if (route.points) {
-            route.points.forEach(pt => {
-              if (pt.photos) {
-                pt.photos = pt.photos.map(p =>
-                  p.startsWith('data:') || p.startsWith('http') ? p : `${serverUrl}/photos/${p}`
-                );
-              }
-            });
-          }
-          await saveRoute(route);
-          routesPulled++;
-        }
-      }
-    }
-  } catch (e) {
-    console.error('Route pull failed:', e.message);
-  }
-
-  // --- PUSH TRACK SESSIONS: Send local track sessions to laptop ---
-  let tracksPushed = 0;
-  try {
-    // Push IndexedDB track sessions
     const localSessions = await getAllTrackSessions();
     for (const session of localSessions) {
       try {
         const resp = await fetch(`${serverUrl}/api/track-session`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(session)
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(session)
         });
-        if (resp.ok) tracksPushed++;
-      } catch (e) {
-        console.error(`Track session push error for ${session.name || session.id}:`, e.message);
-      }
+        if (resp.ok) stats.tracksPushed++;
+      } catch (e) { console.error(`Track session push error:`, e.message); }
     }
-
-    // Push native GPS track sessions (from background tracking)
     if (typeof NativeGps !== 'undefined' && NativeGps.isNative) {
       const nativeSessions = await NativeGps.getSessions();
       for (const session of nativeSessions) {
         try {
           const points = await NativeGps.getSessionPoints(session.id);
-          const payload = { ...session, points };
           const resp = await fetch(`${serverUrl}/api/track-session`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...session, points })
           });
-          if (resp.ok) tracksPushed++;
-        } catch (e) {
-          console.error(`Native track push error for ${session.id}:`, e.message);
-        }
+          if (resp.ok) stats.tracksPushed++;
+        } catch (e) { console.error(`Native track push error:`, e.message); }
       }
     }
-  } catch (e) {
-    console.error('Track session push failed:', e.message);
-  }
+  } catch (e) { console.error('Track session push failed:', e.message); }
 
-  // --- PULL TRACK SESSIONS: Get track sessions from laptop ---
-  let tracksPulled = 0;
   try {
     const resp = await fetch(`${serverUrl}/api/track-sessions`);
     if (resp.ok) {
       const serverSessions = await resp.json();
       const localSessions = await getAllTrackSessions();
-      const localSessionIds = new Set(localSessions.map(s => s.id));
-
+      const localIds = new Set(localSessions.map(s => s.id));
       for (const session of serverSessions) {
-        if (!localSessionIds.has(session.id)) {
-          await saveTrackSession(session);
-          tracksPulled++;
-        }
+        if (!localIds.has(session.id)) { await saveTrackSession(session); stats.tracksPulled++; }
       }
     }
-  } catch (e) {
-    console.error('Track session pull failed:', e.message);
-  }
+  } catch (e) { console.error('Track session pull failed:', e.message); }
 
-  if (onProgress) onProgress(totalWork, totalWork, pushed, errors);
+  step++;
+  if (onProgress) onProgress(totalSteps, totalSteps);
 
-  return { synced: pushed, pulled, errors, total: unsynced.length, routesPushed, routesPulled, tracksPushed, tracksPulled };
+  // Return detailed stats plus a few legacy aliases the UI may read.
+  return {
+    ...stats,
+    synced: stats.pushedCreated + stats.pushedUpdated,
+    pulled: stats.pulledCreated + stats.pulledUpdated,
+    total: stats.pushedCreated + stats.pushedUpdated + stats.pushedDeleted
+  };
 }
 
 async function checkLaptopConnection() {
@@ -296,7 +344,9 @@ async function checkLaptopConnection() {
   if (!serverUrl) return false;
 
   try {
-    const resp = await fetch(`${serverUrl}/api/cache-stats`, {
+    // Use the trivial /api/status health endpoint — NOT /api/cache-stats, which can be
+    // slow on a large tile cache and would make this reachability check time out.
+    const resp = await fetch(`${serverUrl}/api/status`, {
       signal: AbortSignal.timeout(5000)
     });
     return resp.ok;
@@ -305,7 +355,7 @@ async function checkLaptopConnection() {
   }
 }
 
-// Pull waypoints from laptop (standalone)
+// Pull waypoints from laptop (standalone helper; not used by the main sync path)
 async function pullFromLaptop() {
   const serverUrl = await getSetting('laptopUrl');
   if (!serverUrl) throw new Error('No laptop server URL configured');
@@ -320,58 +370,29 @@ async function pullFromLaptop() {
   let imported = 0;
   for (const wp of serverWps) {
     const localWp = localById.get(wp.id);
-    if (!localWp) {
-      wp.synced = true;
-      await saveWaypoint(wp);
+    if (!localWp || (wp.updatedAt && (!localWp.updatedAt || wp.updatedAt > localWp.updatedAt))) {
+      await saveWaypoint(wp, { fromSync: true });
       imported++;
-    } else if (wp.updatedAt && (!localWp.updatedAt || wp.updatedAt > localWp.updatedAt)) {
-      wp.synced = true;
-      await saveWaypoint(wp);
-      imported++;
-    }
-
-    // Pull photos for this waypoint
-    if (wp.photoFiles && wp.photoFiles.length > 0) {
-      for (let i = 0; i < wp.photoFiles.length; i++) {
-        const filename = wp.photoFiles[i];
-        try {
-          const photoResp = await fetch(`${serverUrl}/photos/${filename}`);
-          if (photoResp.ok) {
-            const blob = await photoResp.blob();
-            const reader = new FileReader();
-            const dataUrl = await new Promise((resolve) => {
-              reader.onloadend = () => resolve(reader.result);
-              reader.readAsDataURL(blob);
-            });
-            await savePhoto(wp.id, i, dataUrl);
-          }
-        } catch (photoErr) {
-          console.error(`Failed to pull photo ${filename}:`, photoErr.message);
-        }
-      }
     }
   }
-
   return { imported };
 }
 
 // AI Analysis via laptop server (with offline cache)
 async function runAIAnalysis(waypointId, forceRefresh) {
+  await AiSettings.requireReady();
   // Check cache first (unless forcing a refresh)
   if (!forceRefresh && waypointId) {
     var cached = await getAIResult(waypointId);
     if (cached) {
-      // If we're offline, return the cached result
       var online = navigator.onLine !== false;
       var serverUrl = await getSetting('laptopUrl');
       if (!online || !serverUrl) {
         return { analysis: cached.analysis, fromCache: true, cachedAt: cached.cachedAt };
       }
-      // If online, still check server reachability before deciding
       try {
-        await fetch(serverUrl + '/api/cache-stats', { signal: AbortSignal.timeout(3000) });
+        await fetch(serverUrl + '/api/status', { signal: AbortSignal.timeout(3000) });
       } catch (e) {
-        // Server unreachable — return cached result
         return { analysis: cached.analysis, fromCache: true, cachedAt: cached.cachedAt };
       }
     }
@@ -379,7 +400,6 @@ async function runAIAnalysis(waypointId, forceRefresh) {
 
   var serverUrl2 = await getSetting('laptopUrl');
   if (!serverUrl2) {
-    // No server URL — try cache as last resort
     if (waypointId) {
       var fallback = await getAIResult(waypointId);
       if (fallback) {
@@ -396,16 +416,18 @@ async function runAIAnalysis(waypointId, forceRefresh) {
   });
 
   var result = await resp.json();
+  if (!resp.ok) { await AiSettings.refresh(); throw new Error(result.error || "AI request failed"); }
 
-  // Cache the successful result
   if (result.analysis && waypointId) {
-    try {
-      await saveAIResult(waypointId, result);
-    } catch (e) {
-      console.error('Failed to cache AI result:', e.message);
-    }
+    try { await saveAIResult(waypointId, result); }
+    catch (e) { console.error('Failed to cache AI result:', e.message); }
   }
 
   result.fromCache = false;
   return result;
+}
+
+// Exported for unit testing in Node (no-op in the browser).
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { planReconcile };
 }

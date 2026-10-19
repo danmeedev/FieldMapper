@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="/lib/leaflet.css" />
   <link rel="stylesheet" href="/lib/MarkerCluster.css" />
   <link rel="stylesheet" href="/css/style.css?v=2" />
+<style>html:not(.ai-ready) [data-ai-tool] { display:none !important; }</style>
 </head>
 <body>
   <div id="map"></div>
@@ -90,9 +91,12 @@
     <button id="toggle-panel" class="toolbar-btn">Layers</button>
     <button id="toggle-wp" class="toolbar-btn">Pins</button>
     <button id="toggle-routes" class="toolbar-btn">Routes</button>
+    <button id="toggle-catalog" class="toolbar-btn">Catalog</button>
+    <button id="toggle-orders" class="toolbar-btn">Orders</button>
+    <button id="toggle-digorders" class="toolbar-btn">Dig Orders</button>
     <button id="toggle-measure" class="toolbar-btn">Measure</button>
     <button id="toggle-sync" class="toolbar-btn">Sync</button>
-    <button id="toggle-ai" class="toolbar-btn">AI</button>
+    <button data-ai-tool id="toggle-ai" class="toolbar-btn">AI</button>
     <button id="toggle-settings" class="toolbar-btn">Settings</button>
   </div>
 
@@ -105,7 +109,7 @@
   </div>
 
   <!-- AI Analysis panel -->
-  <div id="ai-panel" class="side-panel">
+  <div data-ai-tool id="ai-panel" class="side-panel">
     <h3>AI Field Assistant</h3>
     <p class="panel-help">Analyzes your field data, photos, and observations. References known geology for your area.</p>
     <button id="ai-analyze-all" class="panel-btn ai">Analyze All Observations</button>
@@ -117,13 +121,13 @@
   <!-- Settings panel -->
   <div id="settings-panel" class="side-panel">
     <h3>Settings</h3>
-    <div class="form-row">
-      <label>Anthropic API Key</label>
-      <input type="password" id="api-key-input" placeholder="sk-ant-...">
-    </div>
-    <button id="save-settings" class="panel-btn">Save Settings</button>
-    <div id="settings-status" class="panel-status"></div>
-    <p class="panel-help" style="margin-top:8px">Get an API key from console.anthropic.com. Required for AI analysis. The key is stored locally on your laptop only.</p>
+    <h4>Connect your Android phone</h4>
+    <p class="panel-help">On Android: Map → ☰ → Settings → Laptop Server URL. Use the address for the Wi-Fi or phone hotspot you are sharing.</p>
+    <div id="connection-info" style="font-size:12px;overflow-wrap:anywhere;margin:10px 0">Loading laptop addresses…</div>
+    <button class="panel-btn" onclick="refreshConnectionInfo()">Refresh Addresses</button>
+    <button type="button" class="panel-btn" onclick="AppUpdates.open()">App Updates</button>
+    <button id="open-ai-config" class="panel-btn" onclick="AiSettings.open()">AI Configuration</button>
+    <p class="panel-help">Configure and test optional AI features here.</p>
   </div>
 
   <!-- Routes panel -->
@@ -177,6 +181,30 @@
     </div>
   </div>
 
+  <!-- Catalog panel (specimens) -->
+  <div id="catalog-panel" class="side-panel">
+    <h3>Catalog (<span id="cat-spec-count">0</span>)</h3>
+    <button id="cat-new-specimen" class="panel-btn" style="font-size:12px;padding:6px;background:#4caf50;margin-bottom:6px">+ Add Specimen</button>
+    <input type="text" id="cat-spec-search" placeholder="Search label, name, mineral..." style="width:100%;padding:6px;margin-bottom:8px;border:1px solid #444;border-radius:4px;background:#222;color:#fff;font-size:12px">
+    <div id="cat-spec-list" class="wp-list"></div>
+  </div>
+
+  <!-- Orders (sales) panel -->
+  <div id="orders-panel" class="side-panel">
+    <h3>Orders (<span id="cat-ord-count">0</span>)</h3>
+    <button id="cat-new-order" class="panel-btn" style="font-size:12px;padding:6px;background:#4caf50;margin-bottom:6px">+ New Order</button>
+    <input type="text" id="cat-ord-search" placeholder="Search order #, customer, item..." style="width:100%;padding:6px;margin-bottom:8px;border:1px solid #444;border-radius:4px;background:#222;color:#fff;font-size:12px">
+    <div id="cat-ord-list" class="wp-list"></div>
+  </div>
+
+  <!-- Dig Orders panel -->
+  <div id="digorders-panel" class="side-panel">
+    <h3>Dig Orders (<span id="cat-do-count">0</span>)</h3>
+    <button id="cat-new-digorder" class="panel-btn" style="font-size:12px;padding:6px;background:#4caf50;margin-bottom:6px">+ New Dig Order</button>
+    <input type="text" id="cat-do-search" placeholder="Search client, material, region..." style="width:100%;padding:6px;margin-bottom:8px;border:1px solid #444;border-radius:4px;background:#222;color:#fff;font-size:12px">
+    <div id="cat-do-list" class="wp-list"></div>
+  </div>
+
   <!-- Measure panel -->
   <div id="measure-panel" class="side-panel" style="width:240px">
     <h3>Measure Tool</h3>
@@ -208,6 +236,11 @@
   <script src="/lib/leaflet.js"></script>
   <script src="/lib/marker-cluster.js"></script>
   <script src="/js/gpx-utils.js"></script>
-  <script src="/js/map.js?v=5"></script>
+<script src="/js/ai-settings.js"></script>
+  <script src="/js/map.js?v=7"></script>
+  <script src="/js/catalog-pc.js?v=3"></script>
+<script src="/js/diagnostics.js"></script>
+<script src="/js/connection-info.js"></script>
+<script src="/js/app-updates.js"></script>
 </body>
 </html>

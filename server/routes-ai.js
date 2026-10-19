@@ -285,11 +285,11 @@ Please provide a comprehensive analysis:
   return prompt;
 }
 
-function callClaude(apiKey, contentBlocks) {
+function callClaude(apiKey, contentBlocks, model, maxTokens = 4096) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 4096,
+      model,
+      max_tokens: maxTokens,
       messages: [{
         role: 'user',
         content: contentBlocks
@@ -315,12 +315,13 @@ function callClaude(apiKey, contentBlocks) {
       res.on('end', () => {
         try {
           const parsed = JSON.parse(data);
-          if (parsed.error) {
-            reject(new Error(parsed.error.message));
-          } else if (parsed.content && parsed.content[0]) {
-            resolve(parsed.content[0].text);
+          if (res.statusCode < 200 || res.statusCode >= 300 || parsed.error) {
+            const error = new Error(`AI provider request failed (${res.statusCode}). Check credentials, model, and account limits.`);
+            error.providerStatus = res.statusCode; reject(error);
           } else {
-            reject(new Error('Unexpected API response'));
+            const text = (parsed.content || []).filter(b => b.type === 'text' && typeof b.text === 'string').map(b => b.text).join('\n');
+            if (!text.trim()) reject(new Error('AI provider returned no text'));
+            else resolve(text);
           }
         } catch (e) {
           reject(new Error('Failed to parse API response'));
@@ -335,38 +336,22 @@ function callClaude(apiKey, contentBlocks) {
   });
 }
 
-module.exports = function setupAIRoutes(app, dataDir, configFile, { photosDir }) {
-  function getConfig() {
-    let config = {};
-    if (fs.existsSync(configFile)) {
-      try { config = JSON.parse(fs.readFileSync(configFile, 'utf8')); } catch (e) {}
-    }
-    if (process.env.ANTHROPIC_API_KEY) {
-      config.anthropicApiKey = process.env.ANTHROPIC_API_KEY;
-    }
-    return config;
-  }
-
+module.exports = function setupAIRoutes(app, dataDir, configFile, { photosDir, callProvider = callClaude }) {
+  const ai = require('./ai-config')(configFile, callProvider);
+  app.get('/api/config', (req, res) => { res.set('Cache-Control', 'no-store'); res.json(ai.status()); });
+  app.get('/api/ai/status', (req, res) => { res.set('Cache-Control', 'no-store'); res.json(ai.status()); });
   app.post('/api/config', (req, res) => {
-    const config = { ...getConfig(), ...req.body };
-    fs.writeFileSync(configFile, JSON.stringify(config, null, 2));
-    res.json({ ok: true });
+    try { res.json(ai.save(req.body)); }
+    catch (e) { res.status(400).json({ error: e.message }); }
   });
-
-  app.get('/api/config', (req, res) => {
-    const config = getConfig();
-    if (config.anthropicApiKey) {
-      config.anthropicApiKeySet = true;
-      config.anthropicApiKey = '****' + config.anthropicApiKey.slice(-4);
-    }
-    res.json(config);
+  app.post('/api/ai/test', async (req, res) => {
+    try { res.json(await ai.test()); }
+    catch (e) { res.status(400).json({ error: e.message, ...ai.status() }); }
   });
 
   app.post('/api/ai/analyze', async (req, res) => {
-    const config = getConfig();
-    if (!config.anthropicApiKey) {
-      return res.status(400).json({ error: 'API key not configured. Go to Settings to add your Anthropic API key.' });
-    }
+    if (!ai.status().ready) return res.status(409).json({ error: 'Configure AI and pass Test Connection before using analysis.' });
+    const config = ai.effective();
 
     const { waypointId, waypoints: allWaypoints } = req.body;
     const wpFile = path.join(dataDir, 'waypoints.json');
@@ -438,9 +423,10 @@ module.exports = function setupAIRoutes(app, dataDir, configFile, { photosDir })
     }
 
     try {
-      const response = await callClaude(config.anthropicApiKey, contentBlocks);
+      const response = await callProvider(config.anthropicApiKey, contentBlocks, config.aiModel);
       res.json({ analysis: response });
     } catch (e) {
+      if ([400, 401, 403, 404].includes(e.providerStatus)) ai.invalidate(config);
       console.error('AI analysis failed:', e.message);
       res.status(500).json({ error: e.message });
     }

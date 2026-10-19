@@ -34,6 +34,7 @@ let currentTab = 'gps';
 let mapInitialized = false;
 let weatherInitialized = false;
 let gpsDataInitialized = false;
+let catalogInitialized = false;
 
 function switchTab(tab) {
   currentTab = tab;
@@ -71,6 +72,14 @@ function switchTab(tab) {
       initWeatherView();
       weatherInitialized = true;
     }
+  }
+
+  if (tab === 'catalog') {
+    if (!catalogInitialized) {
+      initCatalogView();
+      catalogInitialized = true;
+    }
+    refreshCatalog();
   }
 }
 

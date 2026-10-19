@@ -13,8 +13,12 @@ const setupRouteRoutes = require('./server/routes-routes');
 const setupTrackRoutes = require('./server/routes-tracks');
 const setupAIRoutes = require('./server/routes-ai');
 const setupTileProxy = require('./server/tile-proxy');
+const setupCatalogRoutes = require('./server/routes-catalog');
+const { loadTombstones } = require('./server/tombstones');
 
 const app = express();
+const dataDir = process.env.FIELDMAPPER_DATA_DIR ? path.resolve(process.env.FIELDMAPPER_DATA_DIR) : path.join(__dirname, 'data');
+if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
 const PORT = parseInt(process.env.FIELDMAPPER_PORT, 10) || 3000;
 const HTTPS_PORT = parseInt(process.env.FIELDMAPPER_HTTPS_PORT, 10) || 3443;
@@ -25,7 +29,7 @@ const keyPath = path.join(certDir, 'key.pem');
 const certPath = path.join(certDir, 'cert.pem');
 
 function generateCert() {
-  if (fs.existsSync(keyPath) && fs.existsSync(certPath)) return;
+  if (fs.existsSync(keyPath) && fs.existsSync(certPath)) return true;
   if (!fs.existsSync(certDir)) fs.mkdirSync(certDir, { recursive: true });
 
   console.log('Generating self-signed HTTPS certificate for phone GPS access...');
@@ -36,27 +40,22 @@ function generateCert() {
       { stdio: 'pipe' }
     );
     console.log('Certificate generated.');
+    return true;
   } catch (e) {
-    console.error('Could not generate certificate. openssl may not be installed.');
-    console.error('Install it: https://slproweb.com/products/Win32OpenSSL.html');
-    console.error('Or run: winget install ShiningLight.OpenSSL');
-    process.exit(1);
+    console.warn('HTTPS is unavailable; laptop and native Android access remain available over HTTP.');
+    return false;
   }
 }
 
-generateCert();
-
-const sslOptions = {
-  key: fs.readFileSync(keyPath),
-  cert: fs.readFileSync(certPath)
-};
-
+// The native APK uses GPS on-device and local HTTP for syncing. HTTPS is optional
+// for the older phone-browser GPS page and never a portable-package prerequisite.
+const httpsEnabled = process.env.FIELDMAPPER_HTTPS !== '0' && generateCert();
 const httpServer = http.createServer(app);
-const httpsServer = https.createServer(sslOptions, app);
-
-// WebSocket on both HTTP and HTTPS
+const httpsServer = httpsEnabled ? https.createServer({
+  key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath)
+}, app) : null;
 const wssHTTP = new WebSocketServer({ server: httpServer });
-const wssHTTPS = new WebSocketServer({ server: httpsServer });
+const wssHTTPS = httpsServer ? new WebSocketServer({ server: httpsServer }) : null;
 
 // Parse JSON bodies (for waypoint data)
 app.use(express.json({ limit: '50mb' }));
@@ -65,16 +64,28 @@ app.use(express.json({ limit: '50mb' }));
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
+
+// Review diagnostics avoid request bodies, query strings, and credentials.
+if (process.env.FIELDMAPPER_REVIEW_LOGS === '1') {
+  app.use((req, res, next) => {
+    const start = Date.now();
+    res.on('finish', () => {
+      if (req.path.startsWith('/api/') || res.statusCode >= 400)
+        console.log(`[request] ${req.method} ${req.path} ${res.statusCode} ${Date.now() - start}ms`);
+    });
+    next();
+  });
+}
 
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Serve uploaded photos
-const photosDir = path.join(__dirname, 'data', 'photos');
+const photosDir = path.join(dataDir, 'photos');
 if (!fs.existsSync(photosDir)) fs.mkdirSync(photosDir, { recursive: true });
 app.use('/photos', express.static(photosDir));
 
@@ -91,14 +102,24 @@ if (process.env.FIELDMAPPER_AUTH_TOKEN) {
   console.log('Auth token enabled for /api/* routes.');
 }
 
+// Client diagnostics are opt-in for the local review session.
+if (process.env.FIELDMAPPER_REVIEW_LOGS === '1') {
+  app.post('/api/client-log', (req, res) => {
+    const level = ['error', 'warn', 'info'].includes(req.body?.level) ? req.body.level : 'info';
+    const source = req.body?.source === 'mobile' ? 'mobile' : 'desktop';
+    const message = String(req.body?.message || '').replace(/sk-ant-[a-zA-Z0-9_-]+/g, '[redacted]').replace(/[\r\n]/g, ' ').slice(0, 2000);
+    console.log(`[client:${source}:${level}] ${message}`);
+    res.json({ ok: true });
+  });
+}
+
 // --- Shared state for WebSocket clients ---
 let latestGPS = null;
 const mapClients = new Set();
 const gpsClients = new Set();
 
-const dataDir = path.join(__dirname, 'data');
-const configFile = path.join(__dirname, 'config.json');
-const tilesDir = path.join(__dirname, 'tiles');
+const configFile = process.env.FIELDMAPPER_CONFIG_FILE || path.join(__dirname, 'config.json');
+const tilesDir = process.env.FIELDMAPPER_TILES_DIR || path.join(__dirname, 'tiles');
 
 // --- Register route modules ---
 setupWaypointRoutes(app, dataDir, {
@@ -110,16 +131,25 @@ setupWaypointRoutes(app, dataDir, {
 
 const { loadRoutes } = setupRouteRoutes(app, dataDir, { photosDir });
 
+const { loadSpecimens, loadDigOrders, loadOrders } = setupCatalogRoutes(app, dataDir, { photosDir });
+
 setupTrackRoutes(app, dataDir);
 
 setupAIRoutes(app, dataDir, configFile, { photosDir });
 
 setupTileProxy(app, tilesDir);
 
+// --- Delete tombstones (for bidirectional sync reconciliation) ---
+app.get('/api/tombstones', (req, res) => {
+  res.json(loadTombstones(dataDir));
+});
+
 // --- Health check / status ---
 app.get('/api/status', (req, res) => {
   res.json({
     ok: true,
+    reviewLogs: process.env.FIELDMAPPER_REVIEW_LOGS === '1',
+    connectionUrls: getConnectionUrls(),
     gpsClients: gpsClients.size,
     mapClients: mapClients.size,
     latestGPS: latestGPS ? { lat: latestGPS.lat, lon: latestGPS.lon, timestamp: latestGPS.timestamp } : null,
@@ -231,13 +261,22 @@ app.get('/api/backup', (req, res) => {
   const wpFile = path.join(dataDir, 'waypoints.json');
   const waypoints = fs.existsSync(wpFile) ? JSON.parse(fs.readFileSync(wpFile, 'utf8')) : [];
   const routes = loadRoutes();
+  const specimens = loadSpecimens();
+  const digOrders = loadDigOrders();
+  const orders = loadOrders();
 
   res.json({
     exportDate: new Date().toISOString(),
     waypoints,
     routes,
+    specimens,
+    digOrders,
+    orders,
     waypointCount: waypoints.length,
-    routeCount: routes.length
+    routeCount: routes.length,
+    specimenCount: specimens.length,
+    digOrderCount: digOrders.length,
+    orderCount: orders.length
   });
 });
 
@@ -299,36 +338,31 @@ function handleWSConnection(ws, req) {
 }
 
 wssHTTP.on('connection', handleWSConnection);
-wssHTTPS.on('connection', handleWSConnection);
+if (wssHTTPS) wssHTTPS.on('connection', handleWSConnection);
 
-// Get local IP for phone connection
-function getLocalIP() {
-  const interfaces = os.networkInterfaces();
-  for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name]) {
-      if (iface.family === 'IPv4' && !iface.internal) {
-        return iface.address;
+// Show every active LAN candidate rather than silently choosing a VPN/virtual adapter.
+function getConnectionUrls() {
+  const urls = [];
+  for (const [name, interfaces] of Object.entries(os.networkInterfaces())) {
+    for (const iface of interfaces || []) {
+      if (iface.family === 'IPv4' && !iface.internal && !iface.address.startsWith('169.254.')) {
+        urls.push({ interface: name, url: `http://${iface.address}:${PORT}` });
       }
     }
   }
-  return 'localhost';
+  return urls;
 }
-
+httpServer.on('error', e => { console.error(`HTTP startup failed: ${e.message}`); process.exit(1); });
 httpServer.listen(PORT, '0.0.0.0', () => {
-  httpsServer.listen(HTTPS_PORT, '0.0.0.0', () => {
-    const ip = getLocalIP();
-    console.log('');
-    console.log('=== Field Mapper ===');
-    console.log('');
-    console.log(`Map viewer (laptop):  http://localhost:${PORT}`);
-    console.log('');
-    console.log(`Phone (use HTTPS for GPS):`);
-    console.log(`  https://${ip}:${HTTPS_PORT}/gps.html`);
-    console.log('');
-    console.log('Your phone will show a security warning for the self-signed cert.');
-    console.log('Tap "Advanced" then "Proceed" — this is safe, it\'s your own server.');
-    console.log('');
-    console.log('Load the page ONCE while connected to cache it for offline use.');
-    console.log('');
-  });
+  console.log('\n=== Field Mapper ===');
+  console.log(`PC browser: http://localhost:${PORT}`);
+  console.log('Android app > Map > Settings > Laptop Server URL:');
+  for (const entry of getConnectionUrls()) console.log(`  ${entry.interface}: ${entry.url}`);
+  console.log('Keep this window open. Press Ctrl+C to stop.\n');
 });
+if (httpsServer) {
+  httpsServer.on('error', e => console.warn(`Optional HTTPS unavailable: ${e.message}`));
+  httpsServer.listen(HTTPS_PORT, '0.0.0.0', () => {
+    console.log(`Optional phone-browser GPS uses HTTPS port ${HTTPS_PORT} with a local self-signed certificate.`);
+  });
+}
