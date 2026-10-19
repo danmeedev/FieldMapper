@@ -231,14 +231,22 @@ function initMapView() {
       const maxZ = Math.min(zoom + 2, 16);
       const statusEl = document.getElementById('download-status');
 
+      // Check quota before download (Phase 2B)
+      const quota = await checkStorageQuota();
+      if (quota.freeMB < 50 && quota.freeMB !== Infinity) {
+        if (!confirm(`Low storage: only ${quota.freeMB} MB free. Continue download?`)) return;
+      }
+
       downloadBtn.disabled = true;
       statusEl.textContent = 'Calculating tiles...';
 
       try {
-        await downloadArea(activeBase, bounds, Math.max(zoom - 1, 1), maxZ, (done, total) => {
-          statusEl.textContent = `Downloading: ${done}/${total} tiles...`;
+        const result = await downloadArea(activeBase, bounds, Math.max(zoom - 1, 1), maxZ, (done, total, failed) => {
+          statusEl.textContent = `Downloading: ${done}/${total} tiles...${failed ? ` (${failed} failed)` : ''}`;
         });
-        statusEl.textContent = 'Download complete!';
+        statusEl.textContent = result.failed > 0
+          ? `Done! ${result.done} tiles, ${result.failed} failed`
+          : 'Download complete!';
       } catch (e) {
         statusEl.textContent = `Error: ${e.message}`;
       }
@@ -329,6 +337,12 @@ function initMapView() {
 
       if (sourceIds.length === 0) { alert('Select at least one layer'); return; }
 
+      // Check quota before download (Phase 2B)
+      const quota = await checkStorageQuota();
+      if (quota.freeMB < 50 && quota.freeMB !== Infinity) {
+        if (!confirm(`Low storage: only ${quota.freeMB} MB free. Continue download?`)) return;
+      }
+
       const statusEl = document.getElementById('download-status');
       dlControl = { cancelled: false };
       corridorBtn.disabled = true;
@@ -337,15 +351,17 @@ function initMapView() {
 
       try {
         const result = await downloadRouteCorridor(sourceIds, route.points, buffer, 10, maxZoom,
-          (done, total, phase) => {
+          (done, total, phase, failed) => {
             const pct = Math.round(done / total * 100);
-            statusEl.textContent = `${done}/${total} tiles (${pct}%) — ${phase}`;
+            statusEl.textContent = `${done}/${total} tiles (${pct}%) — ${phase}${failed ? ` | ${failed} failed` : ''}`;
           }, dlControl);
 
         if (result.cancelled) {
-          statusEl.textContent = `Cancelled after ${result.done} tiles`;
+          statusEl.textContent = `Cancelled after ${result.done} tiles${result.failed ? ` (${result.failed} failed)` : ''}`;
         } else {
-          statusEl.textContent = `Complete! ${result.done} tiles downloaded`;
+          statusEl.textContent = result.failed > 0
+            ? `Complete! ${result.done} tiles, ${result.failed} failed`
+            : `Complete! ${result.done} tiles downloaded`;
         }
       } catch (e) {
         statusEl.textContent = `Error: ${e.message}`;
@@ -437,7 +453,12 @@ function initMapView() {
   // Cache stats
   getCacheStats().then(stats => {
     const el = document.getElementById('map-cache-stats');
-    if (el) el.textContent = `${stats.totalTiles} tiles cached`;
+    if (el) {
+      let text = `${stats.totalTiles} tiles cached`;
+      if (stats.usedMB) text += ` | ${stats.usedMB} MB used`;
+      if (stats.freeMB && stats.freeMB !== Infinity) text += ` | ${stats.freeMB} MB free`;
+      el.textContent = text;
+    }
   });
 
   // Initialize waypoint marker cluster group
@@ -707,6 +728,8 @@ window.showEditWaypoint = function(id) {
       wp.photoCount = nextIndex;
 
       await saveWaypoint(wp);
+      // Invalidate AI cache on edit (Phase 5E)
+      if (typeof invalidateAICache === 'function') invalidateAICache(wp.id);
       overlay.remove();
       loadMapWaypoints();
       refreshGpsList();

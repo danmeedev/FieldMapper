@@ -16,6 +16,10 @@ let tripSpeedSamples = [];
 let recordingTrack = false;
 let recordingSession = null;
 
+// Memory caps (Phase 4C)
+const TRIP_POINTS_MAX = 10000;
+const RECORDING_POINTS_MAX = 50000;
+
 function initGpsDataView() {
   // Load saved trip if any
   getSetting('trip-data').then(data => {
@@ -107,12 +111,88 @@ function saveTripData() {
   });
 }
 
+// Reconcile native GPS points accumulated in background (Phase 1B)
+async function reconcileNativePoints() {
+  if (!window.NativeGps || !NativeGps.isNative || !NativeGps.currentSessionId) return;
+  if (!recordingSession) return;
+
+  try {
+    const nativePoints = await NativeGps.getSessionPoints(NativeGps.currentSessionId);
+    if (!nativePoints || nativePoints.length === 0) return;
+
+    const lastSync = recordingSession.lastNativeSync || 0;
+    const newPoints = nativePoints.filter(p => (p.timestamp || 0) > lastSync);
+    if (newPoints.length === 0) return;
+
+    console.log(`[GpsData] Reconciling ${newPoints.length} native points`);
+
+    // Build timestamp index of existing points for dedup (1s proximity)
+    const existingTs = new Set();
+    for (const p of recordingSession.points) {
+      existingTs.add(Math.round((p.t || 0) / 1000));
+    }
+
+    let merged = 0;
+    for (const np of newPoints) {
+      const tsSec = Math.round((np.timestamp || 0) / 1000);
+      if (existingTs.has(tsSec)) continue; // duplicate
+
+      const pt = { lat: np.lat, lon: np.lng || np.lon, alt: np.alt, speed: np.speed, t: np.timestamp };
+      recordingSession.points.push(pt);
+
+      // Also add to trip if active
+      if (tripActive) {
+        if (lastTripPos) {
+          const d = haversineDistance(lastTripPos.lat, lastTripPos.lon, pt.lat, pt.lon);
+          if (d > 2) {
+            tripDistance += d;
+            tripPoints.push({ lat: pt.lat, lon: pt.lon, alt: pt.alt, t: pt.t });
+            if (pt.alt && lastTripPos.altitude) {
+              const dElev = pt.alt - lastTripPos.altitude;
+              if (dElev > 0.5) tripElevGain += dElev;
+              else if (dElev < -0.5) tripElevLoss += Math.abs(dElev);
+            }
+          }
+        }
+        lastTripPos = { lat: pt.lat, lon: pt.lon, altitude: pt.alt };
+        if (pt.speed && pt.speed > tripMaxSpeed) tripMaxSpeed = pt.speed;
+        if (pt.alt) {
+          if (pt.alt > tripMaxAlt) tripMaxAlt = pt.alt;
+          if (pt.alt < tripMinAlt) tripMinAlt = pt.alt;
+        }
+      }
+
+      existingTs.add(tsSec);
+      merged++;
+    }
+
+    recordingSession.lastNativeSync = nativePoints[nativePoints.length - 1].timestamp || Date.now();
+
+    // Apply caps (Phase 4C)
+    if (tripPoints.length > TRIP_POINTS_MAX) {
+      tripPoints.splice(0, Math.floor(TRIP_POINTS_MAX / 2));
+    }
+    if (recordingSession.points.length > RECORDING_POINTS_MAX) {
+      recordingSession.points.splice(0, Math.floor(RECORDING_POINTS_MAX / 2));
+    }
+
+    // Persist
+    if (tripActive) saveTripData();
+    await saveSetting('recording-session', recordingSession);
+    console.log(`[GpsData] Merged ${merged} native points`);
+  } catch (e) {
+    console.error('[GpsData] Reconcile error:', e);
+  }
+}
+
 // Track recording — uses native foreground service when available
 async function toggleRecording() {
   if (recordingTrack) {
-    // Stop recording
+    // Stop recording — reconcile native points first (Phase 1B)
     if (window.NativeGps && NativeGps.isNative && NativeGps.isTracking) {
-      // Stop native background tracking
+      try { await reconcileNativePoints(); } catch (e) {
+        console.warn('[GpsData] Final reconcile failed:', e);
+      }
       await NativeGps.stopTracking();
       console.log('[GpsData] Native tracking stopped');
     }
@@ -221,6 +301,11 @@ function onGpsUpdate_gpsData(pos) {
       if (tripSpeedSamples.length > 100) tripSpeedSamples.shift();
     }
 
+    // Cap tripPoints (Phase 4C)
+    if (tripPoints.length > TRIP_POINTS_MAX) {
+      tripPoints.splice(0, Math.floor(TRIP_POINTS_MAX / 2));
+    }
+
     // Save periodically
     if (tripPoints.length % 10 === 0) saveTripData();
   }
@@ -231,6 +316,10 @@ function onGpsUpdate_gpsData(pos) {
       lat: pos.lat, lon: pos.lon, alt: pos.altitude,
       speed: pos.speed, t: Date.now()
     });
+    // Cap recording points (Phase 4C)
+    if (recordingSession.points.length > RECORDING_POINTS_MAX) {
+      recordingSession.points.splice(0, Math.floor(RECORDING_POINTS_MAX / 2));
+    }
     // Save every 20 points
     if (recordingSession.points.length % 20 === 0) {
       saveSetting('recording-session', recordingSession);

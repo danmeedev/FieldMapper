@@ -79,13 +79,33 @@ let gpsWatchId = null;
 let currentPosition = null;
 let gpsActive = false;
 
+// GPS deduplication (Phase 1A) — prevents native + web double-firing
+let _lastGpsTimestamp = 0;
+let _lastGpsLat = 0;
+let _lastGpsLon = 0;
+
 function dispatchGpsUpdate(pos) {
+  // Deduplicate: skip if within 500ms AND within ~3m of last update
+  const now = pos.timestamp || Date.now();
+  if (now - _lastGpsTimestamp < 500) {
+    const dLat = Math.abs(pos.lat - _lastGpsLat);
+    const dLon = Math.abs(pos.lon - _lastGpsLon);
+    // ~3m ≈ 0.000027 degrees latitude
+    if (dLat < 0.000027 && dLon < 0.000027) return;
+  }
+  _lastGpsTimestamp = now;
+  _lastGpsLat = pos.lat;
+  _lastGpsLon = pos.lon;
+
   gpsActive = true;
   currentPosition = pos;
   if (typeof onGpsUpdate_gpsView === 'function') onGpsUpdate_gpsView(currentPosition);
   if (typeof onGpsUpdate_mapView === 'function') onGpsUpdate_mapView(currentPosition);
   if (typeof onGpsUpdate_gpsData === 'function') onGpsUpdate_gpsData(currentPosition);
   if (typeof onGpsUpdate_navigation === 'function') onGpsUpdate_navigation(currentPosition);
+
+  // Geofence proximity check
+  if (typeof checkGeofences === 'function') checkGeofences(pos.lat, pos.lon);
 }
 
 function startGPS() {
@@ -138,6 +158,12 @@ function setupLifecycleHandlers() {
       const status = await NativeGps.checkTracking();
       if (status.tracking) {
         console.log('[App] Native tracking still active, session:', status.sessionId);
+        // Reconcile native points accumulated while backgrounded (Phase 1B)
+        if (typeof reconcileNativePoints === 'function') {
+          try { await reconcileNativePoints(); } catch (e) {
+            console.warn('[App] Native reconciliation failed:', e);
+          }
+        }
       } else if (NativeGps.isTracking) {
         // Was tracking before pause but stopped (user tapped Stop in notification)
         NativeGps.isTracking = false;
@@ -193,6 +219,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Initialize GPS view
   initGpsView();
+
+  // Initialize geofence alerts
+  if (typeof initGeofence === 'function') initGeofence();
 
   // Initialize navigation
   if (typeof initNavigation === 'function') initNavigation();

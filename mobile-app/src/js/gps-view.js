@@ -9,6 +9,7 @@ let selectedCategory = 'general';
 let wsConnected = false;
 let ws = null;
 let httpGpsInterval = null; // Fallback GPS push via HTTP
+let wsReconnectDelay = 1000; // Exponential backoff (Phase 5A)
 
 async function initGpsView() {
   // Load counts from settings
@@ -62,6 +63,7 @@ async function connectWS() {
     ws.onopen = () => {
       console.log('WebSocket connected to laptop');
       wsConnected = true;
+      wsReconnectDelay = 1000; // Reset on successful connection (Phase 5A)
       updateGpsStatus();
       // Send current position immediately if available
       if (currentPosition && ws.readyState === 1) {
@@ -76,8 +78,10 @@ async function connectWS() {
       updateGpsStatus();
       // Fall back to HTTP GPS push
       startHttpGpsPush();
-      // Try WS reconnect after delay
-      setTimeout(connectWS, 15000);
+      // Exponential backoff reconnect (Phase 5A)
+      console.log(`WebSocket reconnecting in ${wsReconnectDelay / 1000}s`);
+      setTimeout(connectWS, wsReconnectDelay);
+      wsReconnectDelay = Math.min(wsReconnectDelay * 2, 60000);
     };
 
     ws.onerror = (e) => {
@@ -90,7 +94,8 @@ async function connectWS() {
     ws = null;
     // Fall back to HTTP GPS push
     startHttpGpsPush();
-    setTimeout(connectWS, 15000);
+    setTimeout(connectWS, wsReconnectDelay);
+    wsReconnectDelay = Math.min(wsReconnectDelay * 2, 60000);
   }
 }
 
@@ -654,6 +659,8 @@ window.showAddPhotosQuick = function(id) {
     wp.photoCount = nextIndex;
     wp.synced = false;
     await saveWaypoint(wp);
+    // Invalidate AI cache when photos added (Phase 5E)
+    if (typeof invalidateAICache === 'function') invalidateAICache(id);
 
     input.remove();
 
