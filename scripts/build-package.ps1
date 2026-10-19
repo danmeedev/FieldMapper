@@ -3,6 +3,8 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $projectRoot
 try {
+  & npm.cmd run check:privacy
+  if ($LASTEXITCODE -ne 0) { throw 'Repository privacy check failed. Do not publish this build.' }
   & npm.cmd test
   if ($LASTEXITCODE -ne 0) { throw 'Persistence/regression checks failed. Do not distribute this build.' }
   $version = (Get-Content package.json -Raw | ConvertFrom-Json).version

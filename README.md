@@ -4,6 +4,12 @@ Offline-first GPS mapping for prospecting, geological observations, routes, and 
 
 **Beginner setup:** [QUICK-SETUP.md](QUICK-SETUP.md), or `START HERE.html` in the distribution. This README is the detailed user/developer reference.
 
+## Download the app
+
+**[Download for Windows](https://github.com/danmeedev/FieldMapper/releases/latest/download/FieldMapper-Windows-Android.zip)** · **[Download Android APK](https://github.com/danmeedev/FieldMapper/releases/latest/download/FieldMapper-Android.apk)** · **[All releases](https://github.com/danmeedev/FieldMapper/releases/latest)**
+
+Windows: download the ZIP, extract the entire folder, then double-click **PC → Start Field Mapper.cmd**. The app opens in your browser. Android: download the APK on your phone and approve installation. The ZIP also includes the APK and offline guides. Use the release downloads above; GitHub's green **Code → Download ZIP** contains source code and is not the ready-to-run app. Start with the [quick setup guide](QUICK-SETUP.md) for connecting your phone, using a hotspot and enabling AI.
+
 ## Contents
 
 - [Distribution and requirements](#distribution-and-requirements)
@@ -321,3 +327,12 @@ PC **Settings → App Updates** and Android **Map → menu → Settings → App 
 A newer stable version opens an update notice. **Close** postpones it. **Download update…** asks for explicit confirmation for that version before opening the ZIP or APK download. Neither checks nor a restart download or install a package. The app never applies updates automatically. PC users stop the app, extract the replacement package and launch it; Android users approve the downloaded APK in the system installer. Preserve the existing application ID, signing key and storage origin, and never uninstall to update. User data remains outside the PC package; see the backup and persistence instructions above.
 
 For release maintainers: edit `public/update-config.json` and `mobile-app/src/update-config.json` with the public `owner/repository`, branch and installed app version. They currently contain deliberate placeholders and produce **no GitHub requests**. Before each build, match both `currentVersion` values to package.json and the Android versionName. Publish the signed APK and Windows ZIP to GitHub Releases, then copy `update-manifest.example.json` to `update-manifest.json` on the configured branch, updating its stable three-part version and exact asset URLs. Publish assets before the manifest. Only HTTPS GitHub release downloads belonging to that repository are accepted. The selected branch is passed as `ref` to the [GitHub contents API](https://docs.github.com/en/rest/repos/contents#get-repository-content); no GitHub token is shipped. Private repositories are not supported. Keep release permissions restricted: the manifest and repository are the trust boundary. Android still checks the APK signature during installation.
+
+
+## Repository privacy and publishing
+
+Personal `data/`, `field-data/`, photos within those folders, tiles, config/API keys, certificates, databases, backups, exports, local review logs, signing secrets and machine-specific settings are excluded from Git. Installed Windows data stays in `%LOCALAPPDATA%\Field Mapper`, outside the source checkout and release folder. Android databases remain in the app's private storage. Never copy personal files into `public/`, `mobile-app/src/` or documentation: those are published application assets.
+
+Run `npm run check:privacy` before pushing. It checks tracked paths and reachable history for private data paths and recognizable credential patterns without printing secret values. The packaging script runs this check, and GitHub Actions repeats it on pushes and pull requests. `.gitignore` cannot remove a file already committed; if a private file is ever committed, stop publishing, remove it from tracking, rotate exposed credentials, and review whether history cleanup is needed.
+
+Release maintainers: build with `npm run package:windows` using the existing private Android signing key. Never commit or upload the signing directory. The build verifies the APK identity and runs extracted-package privacy and persistence checks. Publish the ZIP, signed APK and SHA256SUMS as GitHub Release assets targeting the reviewed `main` commit. Also upload stable aliases `FieldMapper-Windows-Android.zip` and `FieldMapper-Android.apk` so the download links above always point at the latest release. Include quick setup and detailed guides as release assets. Keep update-checker repository/branch placeholders until a release source is explicitly configured; publishing a release does not enable automatic installation.
