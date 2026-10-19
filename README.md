@@ -25,7 +25,7 @@ Windows: download the ZIP, extract the entire folder, then double-click **PC →
 ## Distribution and requirements
 
 ```text
-FieldMapper-1.1.1-Windows-Android/
+FieldMapper-1.1.2-Windows-Android/
   START HERE.html              Beginner guide, readable offline
   QUICK-SETUP.md / .html       Installation, hotspot, AI
   README.md / .html            Detailed reference
@@ -39,7 +39,7 @@ FieldMapper-1.1.1-Windows-Android/
     runtime/LICENSE
     app/                      Server/UI/production dependencies
   Android/
-    FieldMapper-1.1.1.apk     Signed release APK
+    FieldMapper-1.1.2.apk     Signed release APK
 ```
 
 The combined ZIP, standalone APK, and SHA-256 list are built under dist/. End users do not run npm, Gradle, Python, or Android Studio. Extract the whole ZIP first. Requirements: Windows 10/11 x64 (Intel/AMD), a browser, and Android API 24+ (Android 7+). No native iOS/macOS package is included. Internet is needed for acquisition and uncached online resources, not installed GPS/local records/prepared maps.
@@ -98,7 +98,8 @@ The main screen is a Leaflet map. Upper-left status shows the phone GPS connecti
 | **Dig Orders** | Collection-service jobs/inquiries: client, material/region/quality, budget/timeline, rate/days, deposit/balance, terms/status/notes/photos. Link specimens through their dig-order field. Distinct from sales Orders. |
 | **Measure** | Click positions for distance; Undo/Clear manage temporary measurement points. This is not a saved navigation route. |
 | **Sync** | Describes phone-driven sync and offers Reload Waypoints. Trigger reconciliation on Android; reload PC if an existing panel is stale. |
-| **Settings** | Phone-connection URLs, Refresh Addresses, AI Configuration. |
+| **Settings** | Phone-connection URLs, Refresh Addresses, App Updates, AI Configuration. |
+| **Buy me lunch** | Optional appreciation via Cash App **$mountainsailor1**. Opens a donation dialog, then Cash App only if you choose its link. No ads, no paywalls; donating does not unlock or restrict app features. |
 | **AI** | Hidden until configured/tested; Analyze All Observations. Waypoint popups gain AI Analyze. Results appear in the analysis panel. |
 
 ### PC route and offline-map workflows
@@ -140,7 +141,8 @@ Export Track GPX exports the current track; Import GPX selects a compatible file
 | **Download Tiles** | Download Visible Area, or select saved route/buffer in miles/max zoom/layers for Download Route Corridor. Watch progress/size estimates; Cancel stops further fetching. |
 | **Print Route Map** | Select a route for printable map/directions. Device/WebView printing capabilities vary. |
 | **Backup to Laptop** | Runs full reconciliation including routes/catalog/orders/tracks. It propagates changes/deletes, so is not an immutable snapshot. |
-| **Settings** | Laptop URL/Save & Test, AI Configuration, geofence toggle/radius. Proximity alerts default to 100 m and depend on JS GPS updates; they are not OS geofences guaranteed while UI is inactive. |
+| **Buy me lunch** | Optional appreciation via Cash App **$mountainsailor1**. Opens a donation dialog, then Cash App only if you choose its link. No ads, no paywalls; donating does not unlock or restrict app features. |
+| **Settings** | Laptop URL/Save & Test, App Updates, AI Configuration, geofence toggle/radius. Proximity alerts default to 100 m and depend on JS GPS updates; they are not OS geofences guaranteed while UI is inactive. |
 
 During navigation, compass/distance/ETA and previous/next controls guide the selected waypoint/route point. Compass opens the larger view; Stop ends navigation. This is field guidance rather than a full offline road turn-by-turn engine. Access/hazard annotations are user-entered and need field review.
 

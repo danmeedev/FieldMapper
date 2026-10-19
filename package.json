@@ -1,6 +1,6 @@
 {
   "name": "field-mapper",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Offline field mapping with phone GPS for mining",
   "main": "server.js",
   "scripts": {

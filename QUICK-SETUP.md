@@ -27,7 +27,7 @@ To stop, press **Ctrl+C** in that window or close it. Closing just the browser l
 
 ## 3. Install the Android app
 
-1. Find **Android → FieldMapper-1.1.1.apk** in the package, or use the separate `FieldMapper-1.1.1-Android.apk`. They are the same app.
+1. Find **Android → FieldMapper-1.1.2.apk** in the package, or use the separate `FieldMapper-1.1.2-Android.apk`. They are the same app.
 2. Transfer the APK to your phone using USB or your usual file-sharing service.
 3. Open the APK from the phone's Files/Downloads app.
 4. If asked, allow that Files app to install apps from this source, then install **Field Mapper**. You can turn off that source's install permission afterward. Use a trusted package and keep Google Play Protect enabled.
