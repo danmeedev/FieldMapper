@@ -341,3 +341,16 @@ Release maintainers: build with `npm run package:windows` using the existing pri
 
 
 The original v1.1.0 download used placeholder update settings. Install v1.1.1 or newer manually once to enable live GitHub checks. From then on, **Settings → App Updates → Check now** fetches the published manifest and offers newer versions for your approval.
+
+
+### Android: “conflicts with an existing package” after an early PC-built APK
+
+Early Android Studio/local builds used the same package ID as the release but a different signing certificate. Android rejects a normal release APK over those builds. **Do not uninstall or clear storage.** On Android 13 or newer, for the early builds signed on this project's original PC:
+
+1. Sync your phone with the laptop as a precaution and stop any active recording.
+2. Download the [one-time Android migration APK](https://github.com/danmeedev/FieldMapper/releases/download/v1.1.2/FieldMapper-1.1.2-Android-Migration.apk) and install it **over** the existing app.
+3. Open Field Mapper and check your saved records. Then install the normal GitHub release APK; subsequent updates use the normal release downloads.
+
+The bridge contains a cryptographic signing-key transition from the pinned legacy certificate to the existing release certificate. It preserves the application ID, WebView origin and private data; the normal APK and release key are unchanged. It was tested over the legacy emulator installation, followed by a normal release installation. It works only for that legacy signing identity, not arbitrary debug APKs or keys generated on another PC. Android 7–12 recovery needs separate assessment; do not try to fix a conflict by deleting the app.
+
+New Android Studio debug builds use `com.fieldmapper.app.debug` and the label **Field Mapper Dev**. They install alongside the release with separate data, preventing future signing collisions. Use the release app for your field records. Maintainers can reproduce the bridge with `scripts/build-android-migration.ps1` using both existing private keys. The script pins both public certificate fingerprints, keeps key passwords out of command arguments, and disables rollback to the old signer. The normal release/build verification remains in place. [Android signing-key rotation documentation](https://developer.android.com/tools/apksigner).
