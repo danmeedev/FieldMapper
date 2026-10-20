@@ -1,7 +1,7 @@
 name: Verify source and privacy
 on:
   push:
-    branches: [main, dev/improvements]
+    branches: [main, dev/improvements, dev/sharing]
   pull_request:
 permissions:
   contents: read

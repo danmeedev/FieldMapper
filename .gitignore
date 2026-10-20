@@ -39,6 +39,7 @@ dist/
 keystore.properties
 
 # Personal databases, exports and backups (never publish)
+*.fieldmapper.json
 *.db
 *.db-*
 *.sqlite

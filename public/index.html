@@ -96,6 +96,7 @@
     <button id="toggle-digorders" class="toolbar-btn">Dig Orders</button>
     <button id="toggle-measure" class="toolbar-btn">Measure</button>
     <button id="toggle-sync" class="toolbar-btn">Sync</button>
+    <button id="open-sharing" class="toolbar-btn" type="button" onclick="DataSharing.open()">Share data</button>
     <button data-ai-tool id="toggle-ai" class="toolbar-btn">AI</button>
     <button id="toggle-settings" class="toolbar-btn">Settings</button>
     <button id="buy-me-lunch" class="toolbar-btn" type="button" onclick="document.getElementById('lunch-dialog').showModal()">Buy me lunch</button>
@@ -251,5 +252,7 @@
     <a id="lunch-cashapp" href="https://cash.app/$mountainsailor1" target="_blank" rel="noopener noreferrer" style="display:inline-block;padding:12px 0;color:#90caf9">Open Cash App</a>
     <form method="dialog"><button autofocus style="padding:8px 16px;border:1px solid #777;border-radius:6px;background:#333;color:#fff;cursor:pointer">Close</button></form>
   </dialog>
+<script src="/js/share-format.js"></script>
+<script src="/js/sharing-ui.js"></script>
 </body>
 </html>

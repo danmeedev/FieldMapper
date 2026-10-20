@@ -20,3 +20,7 @@ test('privacy gate reports credential location without printing its value',t=>{
  const r=repo(t);const credential=['sk','ant','X'.repeat(35)].join('-');fs.writeFileSync(path.join(r.dir,'accidental.txt'),credential);r.git('add','accidental.txt');r.git('commit','--quiet','-m','Fixture credential');
  const result=r.check();assert.equal(result.status,1);assert.match(result.stderr,/Credential pattern/);assert(!result.stderr.includes(credential));
 });
+test('privacy gate rejects a force-added user sharing file',t=>{
+ const r=repo(t);fs.writeFileSync(path.join(r.dir,'sample.fieldmapper.json'),'{}');r.git('add','sample.fieldmapper.json');
+ const result=r.check();assert.equal(result.status,1);assert.match(result.stderr,/Tracked private path: sample\.fieldmapper\.json/);
+});

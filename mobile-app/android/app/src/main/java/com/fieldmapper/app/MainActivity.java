@@ -8,6 +8,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         // Register the native GPS tracking plugin before super.onCreate
         registerPlugin(GpsTrackingPlugin.class);
+        registerPlugin(SharingFilesPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

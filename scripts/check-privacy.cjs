@@ -2,7 +2,7 @@
 const {execFileSync} = require('node:child_process');
 const fs = require('node:fs');
 const git = (...args) => execFileSync('git', args, {maxBuffer:128*1024*1024});
-const privatePath = /(^|\/)(data|field-data|tiles|certs|backups|exports|signing|\.review-backup|\.review-logs)\/|(^|\/)(config\.json|\.env(?:\..*)?)$|\.(?:db(?:-[\w]+)?|sqlite3?(?:-[\w]+)?|jks|keystore|p12|pem|pfx|key|bak|backup|dump|tar|tgz)$/i;
+const privatePath = /(^|\/)(data|field-data|tiles|certs|backups|exports|signing|\.review-backup|\.review-logs)\/|(^|\/)(config\.json|\.env(?:\..*)?)$|\.fieldmapper\.json$|\.(?:db(?:-[\w]+)?|sqlite3?(?:-[\w]+)?|jks|keystore|p12|pem|pfx|key|bak|backup|dump|tar|tgz)$/i;
 const localPath = /(^|\/)\.claude\/settings\.local\.json$|^mobile-app\/\.idea\//;
 const secret = /sk-ant-[A-Za-z0-9_-]{24,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/;
 const allowed = p => /(^|\/)\.env\.example$/.test(p);

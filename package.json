@@ -12,7 +12,8 @@
     "test:package": "node tests/package-smoke.cjs",
     "check:privacy": "node scripts/check-privacy.cjs",
     "check:distribution": "node scripts/check-distribution.cjs",
-    "test:updates:live": "node scripts/verify-live-updates.cjs"
+    "test:updates:live": "node scripts/verify-live-updates.cjs",
+    "test:sharing": "node tests/sharing-browser.cjs"
   },
   "dependencies": {
     "express": "^4.22.3",

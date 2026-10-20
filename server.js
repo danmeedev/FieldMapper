@@ -137,6 +137,8 @@ setupTrackRoutes(app, dataDir);
 
 setupAIRoutes(app, dataDir, configFile, { photosDir });
 
+require('./server/routes-sharing')(app, dataDir);
+
 setupTileProxy(app, tilesDir);
 
 // --- Delete tombstones (for bidirectional sync reconciliation) ---

@@ -1,5 +1,7 @@
 # Field Mapper
 
+**Development branch: `dev/sharing`.** This branch develops offline user-to-user sharing. It does not publish releases or change the live update feed. The download links below remain the existing public release, which does not include this development feature.
+
 Offline-first GPS mapping for prospecting, geological observations, routes, and specimen-business records. A Windows laptop hosts the desktop browser app; Android collects field data and reconciles it with the laptop. Optional Claude analysis is hidden until the active AI configuration passes a real provider test.
 
 **Beginner setup:** [QUICK-SETUP.md](QUICK-SETUP.md), or `START HERE.html` in the distribution. This README is the detailed user/developer reference.
@@ -354,3 +356,41 @@ Early Android Studio/local builds used the same package ID as the release but a 
 The bridge contains a cryptographic signing-key transition from the pinned legacy certificate to the existing release certificate. It preserves the application ID, WebView origin and private data; the normal APK and release key are unchanged. It was tested over the legacy emulator installation, followed by a normal release installation. It works only for that legacy signing identity, not arbitrary debug APKs or keys generated on another PC. Android 7–12 recovery needs separate assessment; do not try to fix a conflict by deleting the app.
 
 New Android Studio debug builds use `com.fieldmapper.app.debug` and the label **Field Mapper Dev**. They install alongside the release with separate data, preventing future signing collisions. Use the release app for your field records. Maintainers can reproduce the bridge with `scripts/build-android-migration.ps1` using both existing private keys. The script pins both public certificate fingerprints, keeps key passwords out of command arguments, and disables rollback to the old signer. The normal release/build verification remains in place. [Android signing-key rotation documentation](https://developer.android.com/tools/apksigner).
+
+
+## Offline user-to-user sharing — development
+
+Open **Share data** in the PC toolbar or Android **Map → menu → Share data**. Sharing uses a self-contained `.fieldmapper.json` file, not a cloud service, account, discovery server, or automatic upload. Users choose both the data and its recipient. USB, Bluetooth, a local file transfer, or the Android system sharesheet can carry the file without internet. Choosing a third-party sharing app uses that app's transport. Existing optional online map/weather/AI/update features are independent of sharing.
+
+### Send a point, a selection, or your field library
+
+Filter and select individual records, or choose **Select all field data**. The library includes waypoints, routes, specimens, dig orders, sales orders, measurements, local/native GPS recordings, the recorded map trail, saved analysis, drafts, trip data, and available GeoJSON layers. Photos travel inside the file with checksums; the receiver does not need access to your laptop or photo URLs. **Also include linked records** is off by default because related records can include customer/business details. Portable geofence preferences can be selected separately; passwords, API keys, laptop URLs, device counters, sync deletions and cached third-party map tiles are not exported.
+
+Choose **Create sharing file**, inspect the outgoing record details, then **Save file** or **Share file**. No file is sent just by opening the menu. Original-file metadata is excluded unless you explicitly include it, because it can describe records outside your selection. A photo unavailable in local storage stops export rather than silently omitting it or fetching a URL. You may explicitly export without photos/attached files. Stop active recording before exporting a consistent snapshot.
+
+### Receive and review
+
+Use **Open sharing file**. The importer checks its format, coordinates, references, attachment sizes and checksums before showing the preview. Review individual record details and choose all, many, or one of the incoming records. **Keep existing shared copies** is the default. Replacement of a previously imported copy requires choosing the replacement mode and confirming the import; unrelated local records are never overwritten just because another user happened to use the same ID. A declined prompt writes no imported records. Import never applies another user's deletion history, starts a recording, or replaces your device settings. Imported field records participate in your existing paired-laptop sync.
+
+PC changes are staged with a recovery journal; an interrupted import rolls back during recovery. Android content and sharing identities commit in one IndexedDB transaction. If local records change after preview, preview again. A related record not included in the file does not link to an unrelated local object: its local link is left empty and the portable relationship remains available for re-export. Share the related object too, or re-import the original record after importing its dependency.
+
+### Compatibility contract
+
+The public format contract is [docs/sharing-format.schema.json](docs/sharing-format.schema.json). It is separate from the private database schema and application version:
+
+- `format: "fieldmapper-share"` and `version: {"major": 1, "minor": 0}` describe the interchange protocol. Application version is informational, never a compatibility gate.
+- Each record has a type, its own schema revision, a portable `{source, id}` origin, data, and optional typed links. Origins are random/local identities carried only in files users choose to share. Numeric receiver IDs are newly allocated; provenance is retained for safe repeat imports and round-trips.
+- Additive envelope/record properties and newer minor versions are retained. Absent fields do not imply deletion; explicit nulls and empty arrays represent cleared values. Unknown object fields are retained across older forms; matching array items retain fields when an ID or unique coordinate pair identifies them.
+- Unknown record types, newer record schemas, unsupported attachment media, and rich content unsafe for legacy map renderers remain inspectable as **preserved portable data** and can be re-exported. They are not forced into tables or rendered as executable HTML. If a newer unsupported schema replaces a known one, the previous readable copy is kept separately.
+- Future file-protocol major versions are refused before import. No implementation can safely interpret an arbitrary incompatible future protocol. Preserve the original file for a compatible reader. App versions with no sharing reader also cannot read this envelope automatically; this is not a database dump that old apps must understand.
+- Existing Field Mapper waypoint/route/catalog JSON exports have an adapter. Images that an older export never embedded cannot be recovered from that file. GPX import/export remains available through the existing app tools, but this first sharing reader does not ingest arbitrary GPX/GeoJSON files directly; GeoJSON is transported as a preserved layer record in the sharing envelope.
+
+Files are plain JSON, not encrypted. Checksums detect damaged bytes; they do not authenticate a sender. Review the sender/content before allowing replacements. Prototype keys, invalid coordinates, missing/corrupt attachments, over-complex input and oversized files are rejected. Version 1 limits a file to **32 MiB**, 100,000 records, and bounded JSON depth/complexity; use smaller selections for large photo/track libraries. Cached map tiles are re-downloadable provider data and outside this field-data exchange.
+
+### Development and storage
+
+The shared codec is `public/js/share-format.js` with an identical Android copy. `server/sharing-store.js` and `server/routes-sharing.js` provide the PC adapter; its endpoints accept localhost requests only and do not fetch remote resources. `mobile-app/src/js/sharing-local.js` reads the phone's database and native recordings directly, including when no laptop is connected. Android's `SharingFiles` plugin uses the system document picker and sharesheet with temporary read-only file grants; it needs no storage permission or sharing backend.
+
+IndexedDB version 7 adds the `sharing` store and a waypoint-photo index without removing existing stores. Native SQLite is unchanged; received recordings live in portable IndexedDB track records rather than overwriting native recording sessions. Sharing provenance, forwarded envelopes, unsupported content and original attachments stay in the private sharing store (`data/sharing-state.json` on PC). Include it in your existing private data backup. Development Android uses the separate **Field Mapper Dev** application; do not downgrade a database profile upgraded to v7 into an older development app that only understands v6.
+
+Run `npm test`, `npm run test:browser`, and `npm run test:sharing`. Tests cover corruption, offline photo round-trips, selectivity, identity collisions, reference remapping, repeats, explicit replacements, future fields/schemas/media, malformed input, database upgrades, transaction rollback and interrupted-file recovery. `*.fieldmapper.json` is ignored and the privacy gate rejects tracked sharing exports. Keep legacy files with arbitrary `.json` names in Downloads/outside the repository. No personal datasets are test fixtures. No release, tag, version bump, or change to `update-manifest.json` is part of this branch.

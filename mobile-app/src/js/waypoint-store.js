@@ -1,6 +1,6 @@
 // Unified waypoint + photo storage using IndexedDB
 const WP_DB_NAME = 'fieldmapper-data';
-const WP_DB_VERSION = 6;
+const WP_DB_VERSION = 7;
 
 let wpDB = null;
 
@@ -10,6 +10,8 @@ function openWpDB() {
     const req = indexedDB.open(WP_DB_NAME, WP_DB_VERSION);
     req.onupgradeneeded = (e) => {
       const db = e.target.result;
+      // Sharing metadata is additive; field records and the established storage origin stay in place.
+      if (!db.objectStoreNames.contains('sharing')) db.createObjectStore('sharing', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('waypoints')) {
         const store = db.createObjectStore('waypoints', { keyPath: 'id' });
         store.createIndex('synced', 'synced', { unique: false });
@@ -18,6 +20,8 @@ function openWpDB() {
       if (!db.objectStoreNames.contains('photos')) {
         db.createObjectStore('photos', { keyPath: 'id' });
       }
+      const photos = e.target.transaction.objectStore('photos');
+      if (!photos.indexNames.contains('waypointId')) photos.createIndex('waypointId', 'waypointId', { unique: false });
       if (!db.objectStoreNames.contains('track')) {
         db.createObjectStore('track', { autoIncrement: true });
       }
